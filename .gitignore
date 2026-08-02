@@ -25,3 +25,8 @@ saved_models/
 .DS_Store
 .vscode/
 .idea/
+
+# Data (downloaded annotations, extracted crops)
+data/
+ProtoPNet/pretrained_models/
+runs/
