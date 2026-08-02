@@ -159,7 +159,27 @@ def build(raw: Path, out: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     out.mkdir(parents=True, exist_ok=True)
     peds.to_parquet(out / "peds.parquet", index=False)
     frames.to_parquet(out / "frames.parquet", index=False)
+    write_video_list(frames, out / "videos_needed.txt")
     return peds, frames
+
+
+CLIPS_URL = "https://data.nvision2.eecs.yorku.ca/PIE_dataset/PIE_clips"
+
+
+def write_video_list(frames: pd.DataFrame, dest: Path) -> None:
+    """Per-set download URLs for every clip that has annotated pedestrians.
+
+    scripts/run_set.sh greps this file by set, so it must exist before any
+    video download starts.
+    """
+    lines = []
+    for set_id, g in frames.groupby("set_id"):
+        vids = sorted(g.video_id.unique())
+        lines.append(f"# {set_id}: {len(vids)} clips, ~{len(vids) * 1.2:.0f} GB")
+        lines += [f"{CLIPS_URL}/{set_id}/{v}.mp4" for v in vids]
+    dest.write_text("\n".join(lines) + "\n")
+    n = sum(1 for x in lines if not x.startswith("#"))
+    print(f"wrote {dest} ({n} clips, ~{n * 1.2:.0f} GB total download)")
 
 
 # ---------------------------------------------------------------- reporting
