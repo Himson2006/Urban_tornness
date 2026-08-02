@@ -1,0 +1,27 @@
+# Large PDFs (papers, posters, slides) — available from the upstream ProtoPNet repo
+*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Model checkpoints & datasets
+*.pth
+*.pt
+*.ckpt
+datasets/
+saved_models/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
