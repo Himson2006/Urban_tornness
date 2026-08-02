@@ -15,7 +15,9 @@ if [[ ! -f data/pie_manifest/peds.parquet ]]; then
     for f in annotations.zip annotations_attributes.zip annotations_vehicle.zip README.md; do
         [[ -f "$f" ]] || curl -sLO "https://raw.githubusercontent.com/aras62/PIE/master/annotations/$f"
     done
-    unzip -q -o 'annotations*.zip'
+    # stdlib zipfile, not `unzip` -- shared servers often lack it and you rarely
+    # have sudo to `apt install`. (The `unzip` package on PyPI is an empty stub.)
+    for z in annotations*.zip; do python -m zipfile -e "$z" .; done
     cd "$ROOT"
 
     echo "=== building manifest ==="

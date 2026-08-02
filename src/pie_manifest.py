@@ -87,6 +87,25 @@ def parse_attributes(xml_path: Path) -> list[dict]:
 def build(raw: Path, out: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     ann_dir, attr_dir = raw / "annotations", raw / "annotations_attributes"
 
+    # Fail loudly here: an empty parse otherwise surfaces much later as an
+    # opaque KeyError on a column that was never created.
+    for d in (ann_dir, attr_dir):
+        if not d.is_dir():
+            raise SystemExit(
+                f"missing {d}\n"
+                f"Expected the PIE annotation zips extracted under {raw}/.\n"
+                f"If you extracted them elsewhere, either move them:\n"
+                f"    mkdir -p {raw} && mv annotations annotations_attributes "
+                f"annotations_vehicle {raw}/\n"
+                f"or point at them:  python src/pie_manifest.py --raw <dir>")
+    n_xml = len(list(ann_dir.glob("set*/video_*_annt.xml")))
+    if n_xml == 0:
+        raise SystemExit(
+            f"no video_*_annt.xml under {ann_dir}/set*/ (found "
+            f"{[p.name for p in list(ann_dir.iterdir())[:5]]})\n"
+            f"The archive may have extracted one level deeper than expected.")
+    print(f"parsing {n_xml} annotation files from {ann_dir}")
+
     frame_rows, ped_rows = [], []
     for set_dir in sorted(ann_dir.glob("set*")):
         set_id = set_dir.name
