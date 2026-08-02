@@ -190,7 +190,9 @@ def verify(set_id: str, expected: pd.DataFrame, meta: pd.DataFrame,
         im = cv2.resize(im, (128, 256))
         cv2.putText(im, f"{r.action[:4]}/{r.look[:4]}", (3, 14),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1)
-        cv2.putText(im, f"t{r.frames_to_critical:+d}", (3, 250),
+        # frames_to_critical is float (critical_point parses as float, and is
+        # NaN for tracks without attributes), so coerce before formatting
+        cv2.putText(im, f"t{int(r.frames_to_critical):+d}", (3, 250),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
         tiles.append(im)
     if tiles:
