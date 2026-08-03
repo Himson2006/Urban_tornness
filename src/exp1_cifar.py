@@ -57,6 +57,8 @@ def main():
     ap.add_argument("--features", type=Path,
                     default=ROOT / "runs_cifar/resnet34_cifar10/tornness_cifar10h.parquet")
     ap.add_argument("--torn-quantile", type=float, default=0.25)
+    ap.add_argument("--contested-thr", type=float, default=0.90,
+                    help="human top1 below this = contested")
     ap.add_argument("--bootstrap", type=int, default=2000)
     ap.add_argument("--out", type=Path, default=ROOT / "results")
     a = ap.parse_args()
@@ -64,21 +66,35 @@ def main():
     df = pd.read_parquet(a.features)
     print(f"{len(df):,} test images")
 
-    thr = df.margin.quantile(a.torn_quantile)
-    torn = df[df.margin <= thr].reset_index(drop=True)
-    print(f"torn subset: {len(torn):,} images (model margin <= {thr:.4f})")
+    # Rank-select, never threshold: at 96% accuracy the margin quantile is
+    # exactly 1.0 and `margin <= thr` would return the whole test set.
+    n_torn = int(a.torn_quantile * len(df))
+    torn = df.nsmallest(n_torn, "margin").reset_index(drop=True)
+    print(f"torn subset: {len(torn):,} least-confident images "
+          f"(margin {torn.margin.min():.4f}..{torn.margin.max():.4f})")
     print(f"  their human disagreement {torn.disagree.mean():.3f} "
           f"vs {df.disagree.mean():.3f} overall")
-    if thr > 0.95:
-        print("  !! model is saturated -- these are not really torn")
+
+    # top2_mass is only a bimodality measure among images that ARE contested:
+    # a unanimous image has top1=1.0 so top2_mass=1.0, scoring higher than a
+    # genuinely split one. Restrict before interpreting shape outcomes.
+    contested = df[df.top1 < a.contested_thr]
+    torn_con = torn[torn.top1 < a.contested_thr]
+    print(f"contested (human top1 < {a.contested_thr}): {len(contested):,} "
+          f"| torn AND contested: {len(torn_con):,}")
 
     rows = []
+    # Primary population: torn AND contested. Falls back to contested alone if
+    # the intersection is too small to estimate anything.
+    pop = torn_con if len(torn_con) >= 100 else contested
+    pop_name = "torn+contested" if len(torn_con) >= 100 else "contested"
+    print(f"\nanalysing population: {pop_name} (n={len(pop):,})")
     for out in OUTCOMES:
-        y = torn[out].to_numpy(float)
+        y = pop[out].to_numpy(float)
         for f in SHAPE + SCALAR:
-            if f not in torn or torn[f].std() == 0 or torn[f].isna().all():
+            if f not in pop or pop[f].std() == 0 or pop[f].isna().all():
                 continue
-            x = torn[f].to_numpy(float)
+            x = pop[f].to_numpy(float)
             rho, p = stats.spearmanr(x, y)
             lo, hi = boot_ci(x, y, a.bootstrap)
             rows.append({"outcome": out, "feature": f,
@@ -108,19 +124,22 @@ def main():
     con = df[df.top1 < 0.90]
     print(f"  pair match, all images        : {df.pair_match.mean():.4f}")
     print(f"  pair match, contested images  : {con.pair_match.mean():.4f}")
-    if len(torn):
-        hi = torn[torn.coact_ratio >= torn.coact_ratio.quantile(0.75)]
-        lo = torn[torn.coact_ratio <= torn.coact_ratio.quantile(0.25)]
-        print(f"  torn & HIGH co-activation     : {hi.pair_match.mean():.4f} "
-              f"(n={len(hi)})")
-        print(f"  torn & LOW  co-activation     : {lo.pair_match.mean():.4f} "
-              f"(n={len(lo)})")
+    # The control that matters: high co-activation may simply flag "contested at
+    # all", and contested images have higher pair match anyway. Re-test WITHIN
+    # contested images, where that explanation is unavailable.
+    for label, base in (("torn", torn), ("contested only", contested)):
+        if len(base) < 50:
+            continue
+        hi = base[base.coact_ratio >= base.coact_ratio.quantile(0.75)]
+        lo = base[base.coact_ratio <= base.coact_ratio.quantile(0.25)]
         if len(hi) and len(lo):
             t = stats.fisher_exact([[hi.pair_match.sum(), (~hi.pair_match).sum()],
                                     [lo.pair_match.sum(), (~lo.pair_match).sum()]])
-            print(f"  Fisher exact p = {t.pvalue:.2e}")
-            print("  (higher pair match under high co-activation is the strongest")
-            print("   form of 'the exemplars name the two competing readings')")
+            print(f"  [{label}] high coact {hi.pair_match.mean():.4f} (n={len(hi)})"
+                  f"  vs low {lo.pair_match.mean():.4f} (n={len(lo)})"
+                  f"  Fisher p={t.pvalue:.2e}")
+    print("  (pair match rising with co-activation, INSIDE the contested set,")
+    print("   is the strongest form of 'the exemplars name the two readings')")
     print(f"\nwrote {a.out/'exp1_cifar.csv'}")
 
 
