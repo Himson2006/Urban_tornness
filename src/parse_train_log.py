@@ -5,6 +5,11 @@ in their text log -- this recovers it without retraining. Emits the same schema
 train_pie.py now writes live, so downstream plotting code does not care which
 run it is reading.
 
+Note on `test_acc`: ProtoPNet's `tnt.test()` logs the marker "\ttest" whatever
+loader it is given. In runs from before val-based selection existed that column
+really is test accuracy; in newer runs the in-loop evaluations are on VAL, and
+the single honest test number lives in the run's final_test.txt.
+
 Usage:
     python src/parse_train_log.py runs/resnet34_official/train.log
     python src/parse_train_log.py runs/*/train.log        # all runs at once

@@ -73,15 +73,23 @@ def build_loaders(args):
     if args.min_bbox_h > 0:
         df = df[df.bbox_h >= args.min_bbox_h]
 
+    # Model selection needs a split that is neither trained on nor reported.
+    # Selecting the checkpoint on `test` (what this script did originally) makes
+    # every reported number optimistically biased.
     if args.split == "official":
         tr = df[df.split == "train"]
+        va = df[df.split == "val"]          # set05 + set06, PIE's own val split
         te = df[df.split == "test"]
         tag = "official"
     else:
         peds = pd.read_parquet(args.manifest / "peds.parquet")
         folds = kfold_assign(peds, n_folds=args.n_folds, group="video", seed=0)
         df = df.merge(folds[["ped_id", "fold"]], on="ped_id", how="inner")
-        tr = df[df.fold != args.fold]
+        # inner val = the next fold round-robin; still video-grouped, so no
+        # scene spans train/val/test
+        val_fold = (args.fold + 1) % args.n_folds
+        tr = df[(df.fold != args.fold) & (df.fold != val_fold)]
+        va = df[df.fold == val_fold]
         te = df[df.fold == args.fold]
         tag = f"fold{args.fold}"
 
@@ -99,6 +107,7 @@ def build_loaders(args):
 
     train_ds = TwoTuple(PIECropDataset(tr, args.crops, train_tf))
     push_ds = TwoTuple(PIECropDataset(tr, args.crops, push_tf))
+    val_ds = TwoTuple(PIECropDataset(va, args.crops, eval_tf))
     test_ds = TwoTuple(PIECropDataset(te, args.crops, eval_tf))
 
     # balance 75/25 intent by resampling
@@ -118,10 +127,16 @@ def build_loaders(args):
         return torch.utils.data.DataLoader(
             ds, batch_size=bs, num_workers=args.workers, pin_memory=True,
             **extra, **kw)
-    return (mk(train_ds, args.batch, sampler=sampler),
-            mk(push_ds, args.push_batch, shuffle=False),
-            mk(test_ds, args.batch, shuffle=False),
-            tag, len(tr), len(te), tr.ped_id.nunique(), te.ped_id.nunique())
+    return {
+        "train": mk(train_ds, args.batch, sampler=sampler),
+        "push": mk(push_ds, args.push_batch, shuffle=False),
+        "val": mk(val_ds, args.batch, shuffle=False),
+        "test": mk(test_ds, args.batch, shuffle=False),
+        "tag": tag,
+        "counts": {"train": (len(tr), tr.ped_id.nunique()),
+                   "val": (len(va), va.ped_id.nunique()),
+                   "test": (len(te), te.ped_id.nunique())},
+    }
 
 
 def append_metrics(path: Path, row: dict) -> None:
@@ -175,9 +190,15 @@ def main():
     ap.add_argument("--fold", type=int, default=0)
     ap.add_argument("--n-folds", type=int, default=5)
     ap.add_argument("--arch", default="resnet34")
-    ap.add_argument("--protos-per-class", type=int, default=20)
+    ap.add_argument("--protos-per-class", type=int, default=10,
+                    help="20 left most prototypes duplicated; 10 fills better")
     ap.add_argument("--proto-dim", type=int, default=128)
-    ap.add_argument("--epochs", type=int, default=40)
+    ap.add_argument("--epochs", type=int, default=30)
+    ap.add_argument("--features-lr", type=float, default=1e-5,
+                    help="backbone LR; 1e-4 overfit hard (98.7%% train / 75%% test)")
+    ap.add_argument("--weight-decay", type=float, default=1e-3)
+    ap.add_argument("--lr-step", type=int, default=10)
+    ap.add_argument("--lr-gamma", type=float, default=0.5)
     ap.add_argument("--warm-epochs", type=int, default=5)
     ap.add_argument("--push-start", type=int, default=10)
     ap.add_argument("--push-every", type=int, default=10)
@@ -208,8 +229,9 @@ def main():
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
-    (train_loader, push_loader, test_loader,
-     tag, n_tr, n_te, p_tr, p_te) = build_loaders(args)
+    L = build_loaders(args)
+    train_loader, push_loader = L["train"], L["push"]
+    val_loader, test_loader, tag = L["val"], L["test"], L["tag"]
 
     run_dir = args.out / f"{args.arch}_{tag}"
     makedir(str(run_dir))
@@ -222,8 +244,10 @@ def main():
         return
 
     log, logclose = create_logger(log_filename=str(run_dir / "train.log"))
-    log(f"split={args.split} {tag} | train {n_tr:,} crops / {p_tr} peds "
-        f"| test {n_te:,} crops / {p_te} peds")
+    c = L["counts"]
+    log(f"split={args.split} {tag} | " + " | ".join(
+        f"{k} {n:,} crops / {p} peds" for k, (n, p) in c.items()))
+    log(f"selecting checkpoint on VAL; test is scored once at the end")
 
     n_proto = 2 * args.protos_per_class
     ppnet = ppnet_model.construct_PPNet(
@@ -235,11 +259,16 @@ def main():
     log(f"prototypes: {n_proto} ({args.protos_per_class}/class), dim {args.proto_dim}")
 
     joint_opt = torch.optim.Adam([
-        {"params": ppnet.features.parameters(), "lr": 1e-4, "weight_decay": 1e-3},
-        {"params": ppnet.add_on_layers.parameters(), "lr": 3e-3, "weight_decay": 1e-3},
+        {"params": ppnet.features.parameters(), "lr": args.features_lr,
+         "weight_decay": args.weight_decay},
+        {"params": ppnet.add_on_layers.parameters(), "lr": 3e-3,
+         "weight_decay": args.weight_decay},
         {"params": ppnet.prototype_vectors, "lr": 3e-3},
     ])
-    joint_sched = torch.optim.lr_scheduler.StepLR(joint_opt, step_size=5, gamma=0.1)
+    # Upstream uses step_size=5, gamma=0.1. Over 40 epochs that is 7 decays --
+    # the LR reaches ~1e-11 and training silently stops around epoch 25.
+    joint_sched = torch.optim.lr_scheduler.StepLR(
+        joint_opt, step_size=args.lr_step, gamma=args.lr_gamma)
     warm_opt = torch.optim.Adam([
         {"params": ppnet.add_on_layers.parameters(), "lr": 3e-3, "weight_decay": 1e-3},
         {"params": ppnet.prototype_vectors, "lr": 3e-3},
@@ -294,11 +323,11 @@ def main():
                                coefs=coefs, log=log)
             joint_sched.step()
 
-        acc = tnt.test(model=ppnet_par, dataloader=test_loader,
+        acc = tnt.test(model=ppnet_par, dataloader=val_loader,
                        class_specific=True, log=log)
         append_metrics(metrics_path, {
             "epoch": epoch, "phase": phase, "train_acc": tr_acc,
-            "test_acc": acc, "pushed": 0, "best": max(best, acc)})
+            "val_acc": acc, "pushed": 0, "best_val": max(best, acc)})
 
         if epoch in push_epochs:
             # projects every prototype onto its nearest real training patch --
@@ -313,7 +342,7 @@ def main():
                 prototype_self_act_filename_prefix="prototype-self-act",
                 proto_bound_boxes_filename_prefix="bb",
                 save_prototype_class_identity=True, log=log)
-            acc = tnt.test(model=ppnet_par, dataloader=test_loader,
+            acc = tnt.test(model=ppnet_par, dataloader=val_loader,
                            class_specific=True, log=log)
 
             tnt.last_only(model=ppnet_par, log=log)
@@ -321,16 +350,18 @@ def main():
                 tr_acc = tnt.train(model=ppnet_par, dataloader=train_loader,
                                    optimizer=last_opt, class_specific=True,
                                    coefs=coefs, log=log)
-                acc = tnt.test(model=ppnet_par, dataloader=test_loader,
+                acc = tnt.test(model=ppnet_par, dataloader=val_loader,
                                class_specific=True, log=log)
                 append_metrics(metrics_path, {
                     "epoch": epoch, "phase": f"last_{li}", "train_acc": tr_acc,
-                    "test_acc": acc, "pushed": 1, "best": max(best, acc)})
-            if acc > best:
-                best = acc
-                # tornness.py loads the whole pickled module, so keep saving it
-                torch.save(ppnet, run_dir / "best.pth")
-                log(f"  saved best.pth (acc {acc:.4f})")
+                    "val_acc": acc, "pushed": 1, "best_val": max(best, acc)})
+                # check inside the loop: the last iteration is not always the
+                # best one, and only post-push states have real exemplars
+                if acc > best:
+                    best = acc
+                    # tornness.py loads the whole pickled module
+                    torch.save(ppnet, run_dir / "best.pth")
+                    log(f"  saved best.pth (val acc {acc:.4f})")
 
         # Checkpoint every epoch, after any push cycle has completed. Worst case
         # an interrupt costs one epoch, not the whole run.
@@ -341,8 +372,22 @@ def main():
         log(f"  checkpoint saved (epoch {epoch}, best {best:.4f})")
 
     torch.save(ppnet, run_dir / "final.pth")
+
+    # Score test exactly once, with the val-selected checkpoint. This is the
+    # only number that may be reported.
+    if (run_dir / "best.pth").exists():
+        sel = torch.load(run_dir / "best.pth", map_location="cuda",
+                         weights_only=False).cuda()
+        test_acc = tnt.test(model=torch.nn.DataParallel(sel),
+                            dataloader=test_loader, class_specific=True, log=log)
+        log(f"FINAL val-selected checkpoint: val {best:.4f} | TEST {test_acc:.4f}")
+        (run_dir / "final_test.txt").write_text(
+            f"val_acc={best:.6f}\ntest_acc={test_acc:.6f}\n")
+    else:
+        log("no best.pth -- run never reached a push epoch")
+
     (run_dir / "DONE").touch()
-    log(f"done. best test acc {best:.4f}. run dir {run_dir}")
+    log(f"done. best val acc {best:.4f}. run dir {run_dir}")
     logclose()
 
 

@@ -68,26 +68,68 @@ def score(ppnet, loader) -> tuple[np.ndarray, np.ndarray]:
     return torch.cat(ps).numpy()
 
 
-def prototype_health(ppnet) -> str:
-    """Is the model still using distinct, class-separated prototypes?
+def prototype_health(ppnet) -> tuple[str, int]:
+    """Are the prototypes distinct, and are they distinct *within* each class?
 
-    `p dist pair` collapsing toward 0 means the two classes' prototype sets have
-    converged, so co-activation would measure redundancy rather than genuine
-    cue conflict -- which would invalidate the whole premise.
+    Two different failure modes, and they pull the summary statistics in
+    opposite directions:
+
+      between-class collapse -- the two classes share prototypes. Shows up as
+        between/within ratio near 1.0. Co-activation would then measure
+        redundancy rather than cue conflict.
+
+      within-class collapse -- each class keeps one prototype, duplicated N
+        times. Shows up as a *high* ratio, which naively looks healthy, but the
+        effective vocabulary is 1 exemplar per class. Co-activation still works
+        (it only needs the per-class max) but the per-prototype profile fallback
+        is dead, and "the exemplars name the two readings" loses most of its
+        force.
+
+    Returns (report, n_effective_prototypes).
     """
     P = ppnet.prototype_vectors.detach().flatten(1)                # (n_proto, d)
     cls = ppnet.prototype_class_identity.argmax(1).cpu().numpy()
     D = torch.cdist(P, P).cpu().numpy()
     iu = np.triu_indices(len(P), k=1)
     same = (cls[iu[0]] == cls[iu[1]])
-    return (f"  mean pairwise prototype distance : {D[iu].mean():.4f}\n"
-            f"    within-class                   : {D[iu][same].mean():.4f}\n"
-            f"    between-class                  : {D[iu][~same].mean():.4f}\n"
-            f"    between/within ratio           : "
-            f"{D[iu][~same].mean() / max(D[iu][same].mean(), 1e-9):.3f}"
-            f"   (~1.0 => classes share prototypes => collapse)\n"
-            f"  duplicate prototypes (dist<0.01) : "
-            f"{int((D[iu] < 0.01).sum())} of {len(iu[0])} pairs")
+    w, b = D[iu][same].mean(), D[iu][~same].mean()
+
+    # effective vocabulary: single-linkage clusters at a tight threshold
+    thr = 0.01 * max(D[iu].mean(), 1e-9) / max(D[iu].mean(), 1e-9) + 0.01
+    n = len(P)
+    parent = list(range(n))
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]; x = parent[x]
+        return x
+    for i in range(n):
+        for j in range(i + 1, n):
+            if D[i, j] < thr:
+                parent[find(i)] = find(j)
+    groups = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    eff = len(groups)
+    eff_by_cls = {c: len({find(i) for i in range(n) if cls[i] == c}) for c in (0, 1)}
+
+    lines = [
+        f"  mean pairwise prototype distance : {D[iu].mean():.4f}",
+        f"    within-class                   : {w:.4f}",
+        f"    between-class                  : {b:.4f}",
+        f"    between/within ratio           : {b / max(w, 1e-9):.3f}"
+        f"   (~1.0 => classes share prototypes)",
+        f"  duplicate pairs (dist<0.01)      : {int((D[iu] < 0.01).sum())} of {len(iu[0])}",
+        f"  EFFECTIVE prototypes             : {eff} of {n}"
+        f"   (class0: {eff_by_cls[0]}/{int((cls==0).sum())},"
+        f" class1: {eff_by_cls[1]}/{int((cls==1).sum())})",
+    ]
+    if eff < 0.5 * n:
+        lines.append(f"  !! WITHIN-CLASS COLLAPSE: {n - eff} of {n} prototypes are "
+                     f"duplicates of another.")
+    if b / max(w, 1e-9) < 1.5:
+        lines.append("  !! BETWEEN-CLASS COLLAPSE: classes are not using distinct "
+                     "prototypes.")
+    return "\n".join(lines), eff
 
 
 def main():
@@ -145,18 +187,25 @@ def main():
         print(m[["tn", "fp", "fn", "tp"]].to_string())
 
     print("\n=== prototype health ===")
-    print(prototype_health(ppnet))
+    health, eff = prototype_health(ppnet)
+    print(health)
 
     ped = rows[1]
+    n_proto = ppnet.prototype_vectors.shape[0]
     print("\n=== read ===")
-    if ped["auroc"] > 0.70 and ped["balanced_accuracy"] > 0.65:
-        print("  Model has real signal. Raw accuracy below the majority baseline is")
-        print("  expected with balanced training -- judge it on AUROC/balanced acc.")
-    elif ped["auroc"] > 0.60:
-        print("  Weak but non-trivial signal. Usable for tornness experiments only")
-        print("  if prototype health below looks sane.")
+    if ped["auroc"] < 0.60:
+        print("  NOT LEARNING. Fix training before any tornness analysis.")
+    elif eff < 0.5 * n_proto:
+        print(f"  Discriminative signal is fine (AUROC {ped['auroc']:.3f}) but the")
+        print(f"  prototype layer collapsed to {eff} effective exemplars. Co-activation")
+        print("  still works; per-prototype profiles and the exemplar story do not.")
+        print("  Retrain with fewer prototypes/class before the analysis.")
+    elif ped["auroc"] > 0.70:
+        print(f"  Usable. AUROC {ped['auroc']:.3f}, {eff}/{n_proto} effective prototypes.")
+        print("  Accuracy below the majority baseline is expected under balanced")
+        print("  training -- judge on AUROC / balanced accuracy.")
     else:
-        print("  NOT LEARNING. Fix training before running any tornness analysis.")
+        print("  Weak but non-trivial. Proceed with caution.")
 
 
 if __name__ == "__main__":
