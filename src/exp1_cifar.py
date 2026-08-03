@@ -138,8 +138,47 @@ def main():
             print(f"  [{label}] high coact {hi.pair_match.mean():.4f} (n={len(hi)})"
                   f"  vs low {lo.pair_match.mean():.4f} (n={len(lo)})"
                   f"  Fisher p={t.pvalue:.2e}")
-    print("  (pair match rising with co-activation, INSIDE the contested set,")
-    print("   is the strongest form of 'the exemplars name the two readings')")
+    # THE decisive comparison. Every uncertainty measure can say "I am unsure".
+    # Only the prototype layer proposes WHICH two readings compete. But a scalar
+    # could still act as a gate -- flagging when the model's top-2 pair happens
+    # to be right. If entropy stratifies pair match as well as co-activation
+    # does, shape adds nothing and the story collapses to re-labelled confidence.
+    print("\n=== can a SCALAR gate the pair as well as co-activation? ===")
+    print("    (pair match in the top vs bottom quartile of each measure,")
+    print("     contested images only)\n")
+    gate = []
+    for f in ["coact_ratio", "coact_top2", "top2_share", "global_max",
+              "entropy", "margin", "mc_std"]:
+        if f not in contested or contested[f].isna().all():
+            continue
+        v = contested[f]
+        hi = contested[v >= v.quantile(0.75)]
+        lo = contested[v <= v.quantile(0.25)]
+        if not len(hi) or not len(lo):
+            continue
+        a_, b_ = hi.pair_match.mean(), lo.pair_match.mean()
+        ft = stats.fisher_exact([[hi.pair_match.sum(), (~hi.pair_match).sum()],
+                                 [lo.pair_match.sum(), (~lo.pair_match).sum()]])
+        gate.append({"measure": f,
+                     "kind": "shape" if f in SHAPE else "scalar",
+                     "hi": a_, "lo": b_, "spread": abs(a_ - b_),
+                     "ratio": a_ / max(b_, 1e-9), "fisher_p": ft.pvalue})
+    gt = pd.DataFrame(gate).sort_values("spread", ascending=False)
+    g = gt.copy()
+    for c in ("hi", "lo", "spread", "ratio"):
+        g[c] = g[c].round(4)
+    g["fisher_p"] = g.fisher_p.apply(lambda v: f"{v:.2e}")
+    print(g.to_string(index=False))
+    gt.to_csv(a.out / "exp1_cifar_pairgate.csv", index=False)
+    bs = gt[gt.kind == "shape"].spread.max()
+    bc = gt[gt.kind == "scalar"].spread.max()
+    print(f"\n  best shape spread {bs:.4f}  vs  best scalar spread {bc:.4f}")
+    if bs > bc + 0.05:
+        print("  => Only prototype geometry knows when its proposed pair is the")
+        print("     humans' pair. Scalars cannot gate what they cannot name.")
+    else:
+        print("  => A scalar gates the pair just as well; the identification")
+        print("     claim does not need prototype geometry.")
     print(f"\nwrote {a.out/'exp1_cifar.csv'}")
 
 
