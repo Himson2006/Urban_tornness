@@ -107,8 +107,17 @@ def build_loaders(args):
     sampler = torch.utils.data.WeightedRandomSampler(
         torch.as_tensor(w, dtype=torch.double), num_samples=len(w), replacement=True)
 
-    mk = lambda ds, bs, **kw: torch.utils.data.DataLoader(
-        ds, batch_size=bs, num_workers=args.workers, pin_memory=True, **kw)
+    # Training on 224px crops is usually input-bound, not GPU-bound: the GPU
+    # finishes a batch faster than the workers can decode the next one.
+    # persistent_workers avoids respawning them every epoch, prefetch_factor
+    # keeps a queue ahead of the GPU.
+    def mk(ds, bs, **kw):
+        extra = {}
+        if args.workers > 0:
+            extra = {"persistent_workers": True, "prefetch_factor": 4}
+        return torch.utils.data.DataLoader(
+            ds, batch_size=bs, num_workers=args.workers, pin_memory=True,
+            **extra, **kw)
     return (mk(train_ds, args.batch, sampler=sampler),
             mk(push_ds, args.push_batch, shuffle=False),
             mk(test_ds, args.batch, shuffle=False),
@@ -162,12 +171,26 @@ def main():
     ap.add_argument("--frame-stride", type=int, default=5,
                     help="keep 1 in N frames; adjacent frames are near-duplicates")
     ap.add_argument("--min-bbox-h", type=float, default=40.0)
-    ap.add_argument("--gpu", default="0")
+    ap.add_argument("--gpu", default="0",
+                    help="GPU id, or a comma list ('0,1') to DataParallel one "
+                         "run across several GPUs -- scale --batch with it")
+    ap.add_argument("--tf32", action="store_true",
+                    help="enable TF32 matmuls (Ampere+); faster, slightly lower "
+                         "mantissa precision")
     ap.add_argument("--no-resume", action="store_true",
                     help="ignore any existing checkpoint and start from scratch")
     args = ap.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+
+    # Crop sizes are fixed (224x224), so cuDNN can pick its best kernels once
+    # and reuse them. Free speedup; only hurts with varying input shapes.
+    torch.backends.cudnn.benchmark = True
+    if args.tf32:
+        # Ampere+ (A100/A6000/RTX30xx and newer). Large matmul speedup at
+        # slightly reduced mantissa precision.
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     (train_loader, push_loader, test_loader,
      tag, n_tr, n_te, p_tr, p_te) = build_loaders(args)
