@@ -48,7 +48,8 @@ launch() {   # $1 = job, $2 = gpu
     else
         args=(--split kfold --fold "$job")
     fi
-    python src/train_pie.py "${args[@]}" --arch "$ARCH" --epochs "$EPOCHS" \
+    # -u: unbuffered stdout, so runs/<job>.out stays live and survives a kill
+    python -u src/train_pie.py "${args[@]}" --arch "$ARCH" --epochs "$EPOCHS" \
            --batch "$BATCH" --workers "$WORKERS" --gpu "$g" ${TF32:+--tf32} \
            >> "runs/${job}.out" 2>&1 &
 }

@@ -124,6 +124,22 @@ def build_loaders(args):
             tag, len(tr), len(te), tr.ped_id.nunique(), te.ped_id.nunique())
 
 
+def append_metrics(path: Path, row: dict) -> None:
+    """One CSV row per epoch, flushed immediately.
+
+    ProtoPNet's logger flushes only every 10 writes and nohup block-buffers
+    stdout, so both text logs can lose the tail of a killed run. This file is
+    the durable, machine-readable record the paper's plots read from.
+    """
+    new = not path.exists()
+    with open(path, "a") as f:
+        if new:
+            f.write(",".join(row) + "\n")
+        f.write(",".join(str(row[k]) for k in row) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
 def save_ckpt(path: Path, **state) -> None:
     """Atomic checkpoint write: temp file then rename.
 
@@ -260,20 +276,29 @@ def main():
     else:
         log("starting from scratch")
 
+    metrics_path = run_dir / "metrics.csv"
+
     for epoch in range(start_epoch, args.epochs):
         log(f"epoch {epoch}")
         if epoch < args.warm_epochs:
+            phase = "warm"
             tnt.warm_only(model=ppnet_par, log=log)
-            tnt.train(model=ppnet_par, dataloader=train_loader,
-                      optimizer=warm_opt, class_specific=True, coefs=coefs, log=log)
+            tr_acc = tnt.train(model=ppnet_par, dataloader=train_loader,
+                               optimizer=warm_opt, class_specific=True,
+                               coefs=coefs, log=log)
         else:
+            phase = "joint"
             tnt.joint(model=ppnet_par, log=log)
-            tnt.train(model=ppnet_par, dataloader=train_loader,
-                      optimizer=joint_opt, class_specific=True, coefs=coefs, log=log)
+            tr_acc = tnt.train(model=ppnet_par, dataloader=train_loader,
+                               optimizer=joint_opt, class_specific=True,
+                               coefs=coefs, log=log)
             joint_sched.step()
 
         acc = tnt.test(model=ppnet_par, dataloader=test_loader,
                        class_specific=True, log=log)
+        append_metrics(metrics_path, {
+            "epoch": epoch, "phase": phase, "train_acc": tr_acc,
+            "test_acc": acc, "pushed": 0, "best": max(best, acc)})
 
         if epoch in push_epochs:
             # projects every prototype onto its nearest real training patch --
@@ -292,12 +317,15 @@ def main():
                            class_specific=True, log=log)
 
             tnt.last_only(model=ppnet_par, log=log)
-            for _ in range(20):
-                tnt.train(model=ppnet_par, dataloader=train_loader,
-                          optimizer=last_opt, class_specific=True,
-                          coefs=coefs, log=log)
+            for li in range(20):
+                tr_acc = tnt.train(model=ppnet_par, dataloader=train_loader,
+                                   optimizer=last_opt, class_specific=True,
+                                   coefs=coefs, log=log)
                 acc = tnt.test(model=ppnet_par, dataloader=test_loader,
                                class_specific=True, log=log)
+                append_metrics(metrics_path, {
+                    "epoch": epoch, "phase": f"last_{li}", "train_acc": tr_acc,
+                    "test_acc": acc, "pushed": 1, "best": max(best, acc)})
             if acc > best:
                 best = acc
                 # tornness.py loads the whole pickled module, so keep saving it
