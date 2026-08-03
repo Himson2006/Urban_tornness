@@ -194,8 +194,21 @@ def main():
                     help="20 left most prototypes duplicated; 10 fills better")
     ap.add_argument("--proto-dim", type=int, default=128)
     ap.add_argument("--epochs", type=int, default=30)
-    ap.add_argument("--features-lr", type=float, default=1e-5,
-                    help="backbone LR; 1e-4 overfit hard (98.7%% train / 75%% test)")
+    ap.add_argument("--features-lr", type=float, default=0.0,
+                    help="backbone LR. 0 freezes it. Non-zero values let the "
+                         "add-on sigmoid saturate to binary corners, which "
+                         "quantises crops onto prototypes (distance exactly 0) "
+                         "and destroys co-activation.")
+    ap.add_argument("--addon-lr", type=float, default=1e-3)
+    ap.add_argument("--proto-lr", type=float, default=1e-3)
+    ap.add_argument("--clst", type=float, default=0.2,
+                    help="cluster coefficient; 0.8 drives min distance to 0")
+    ap.add_argument("--sep", type=float, default=-0.08)
+    ap.add_argument("--l1", type=float, default=1e-4)
+    ap.add_argument("--proto-activation", default="log",
+                    choices=["log", "linear"],
+                    help="'log' saturates at 9.21 when distance hits 0; "
+                         "'linear' (-distance) has no ceiling")
     ap.add_argument("--weight-decay", type=float, default=1e-3)
     ap.add_argument("--lr-step", type=int, default=10)
     ap.add_argument("--lr-gamma", type=float, default=0.5)
@@ -253,30 +266,43 @@ def main():
     ppnet = ppnet_model.construct_PPNet(
         base_architecture=args.arch, pretrained=True, img_size=IMG_SIZE,
         prototype_shape=(n_proto, args.proto_dim, 1, 1), num_classes=2,
-        prototype_activation_function="log", add_on_layers_type="regular")
+        prototype_activation_function=args.proto_activation,
+        add_on_layers_type="regular")
     ppnet = ppnet.cuda()
     ppnet_par = torch.nn.DataParallel(ppnet)
     log(f"prototypes: {n_proto} ({args.protos_per_class}/class), dim {args.proto_dim}")
 
-    joint_opt = torch.optim.Adam([
-        {"params": ppnet.features.parameters(), "lr": args.features_lr,
+    joint_groups = [
+        {"params": ppnet.add_on_layers.parameters(), "lr": args.addon_lr,
          "weight_decay": args.weight_decay},
-        {"params": ppnet.add_on_layers.parameters(), "lr": 3e-3,
-         "weight_decay": args.weight_decay},
-        {"params": ppnet.prototype_vectors, "lr": 3e-3},
-    ])
+        {"params": ppnet.prototype_vectors, "lr": args.proto_lr},
+    ]
+    if args.features_lr > 0:
+        joint_groups.insert(0, {"params": ppnet.features.parameters(),
+                                "lr": args.features_lr,
+                                "weight_decay": args.weight_decay})
+    else:
+        # frozen backbone: the feature space stays where ImageNet put it, so it
+        # cannot collapse to binary corners while memorising 880 pedestrians
+        for prm in ppnet.features.parameters():
+            prm.requires_grad = False
+        log("backbone FROZEN (features_lr=0)")
+    joint_opt = torch.optim.Adam(joint_groups)
     # Upstream uses step_size=5, gamma=0.1. Over 40 epochs that is 7 decays --
     # the LR reaches ~1e-11 and training silently stops around epoch 25.
     joint_sched = torch.optim.lr_scheduler.StepLR(
         joint_opt, step_size=args.lr_step, gamma=args.lr_gamma)
     warm_opt = torch.optim.Adam([
-        {"params": ppnet.add_on_layers.parameters(), "lr": 3e-3, "weight_decay": 1e-3},
-        {"params": ppnet.prototype_vectors, "lr": 3e-3},
+        {"params": ppnet.add_on_layers.parameters(), "lr": args.addon_lr,
+         "weight_decay": args.weight_decay},
+        {"params": ppnet.prototype_vectors, "lr": args.proto_lr},
     ])
     last_opt = torch.optim.Adam(
         [{"params": ppnet.last_layer.parameters(), "lr": 1e-4}])
 
-    coefs = {"crs_ent": 1, "clst": 0.8, "sep": -0.08, "l1": 1e-4}
+    coefs = {"crs_ent": 1, "clst": args.clst, "sep": args.sep, "l1": args.l1}
+    log(f"coefs={coefs} | proto_activation={args.proto_activation} | "
+        f"features_lr={args.features_lr} addon_lr={args.addon_lr}")
     push_epochs = [e for e in range(args.epochs)
                    if e >= args.push_start and e % args.push_every == 0]
     best = 0.0
