@@ -152,14 +152,37 @@ def main():
         show[c] = show[c].apply(lambda v: f"{v:.2e}")
     print(show.to_string(index=False))
 
-    shp = res[res.kind == "shape"].spearman.abs().max()
-    scl = res[res.kind == "scalar"].spearman.abs().max()
-    print(f"\nbest shape feature |rho| = {shp:.4f}"
-          f"   |   best scalar baseline |rho| = {scl:.4f}")
-    if shp > scl:
+    # Is the "torn" subset actually torn? If the model is saturated, margin's
+    # lower quartile still sits near 1.0 and this experiment has not run at all.
+    print(f"\n=== is the torn subset actually torn? ===")
+    q = ped.margin.quantile([0.01, 0.05, 0.10, 0.25, 0.50]).round(4)
+    print("  margin quantiles: " + ", ".join(f"p{int(k*100)}={v}" for k, v in q.items()))
+    frac = (ped.margin < 0.5).mean()
+    print(f"  pedestrians with margin < 0.50: {frac:.4f}  "
+          f"(< 0.20: {(ped.margin < 0.2).mean():.4f})")
+    saturated = thr > 0.9
+    if saturated:
+        print("  !! SATURATED: even the most-torn quartile is near-certain.")
+        print("     The model outputs p~0/1 everywhere, so there are no torn")
+        print("     predictions to type. Fix calibration/overfitting before")
+        print("     drawing any conclusion from the table above.")
+
+    shp = res[res.kind == "shape"]
+    scl = res[res.kind == "scalar"]
+    b_shp, b_scl = shp.spearman.abs().max(), scl.spearman.abs().max()
+    sig = res[res.p < 0.05]
+    print(f"\nbest shape |rho| = {b_shp:.4f}   |   best scalar |rho| = {b_scl:.4f}")
+    print(f"features significant at p<0.05: {len(sig)} of {len(res)}")
+    if saturated:
+        print("=> INCONCLUSIVE: no genuinely torn predictions exist. Not a test "
+              "of the hypothesis.")
+    elif len(sig) == 0:
+        print("=> NULL RESULT: nothing predicts human disagreement, shape or scalar.")
+    elif b_shp > b_scl + 0.05 and (shp.p < 0.05).any():
         print("=> Shape beats scalar uncertainty. The core claim has support.")
     else:
-        print("=> Shape does NOT beat scalar uncertainty on this run.")
+        print("=> Shape does NOT meaningfully beat scalar uncertainty "
+              "(difference within noise).")
     print(f"\nwrote {a.out/'exp1_disagreement.csv'}")
 
 
