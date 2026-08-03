@@ -27,8 +27,9 @@ for r in runs/${ARCH}_*/; do
     [[ -d "$r" ]] || continue
     name=$(basename "$r")
     if [[ -f "$r/DONE" ]]; then
-        acc=$(grep -oE "best test acc [0-9.]+" "$r/train.log" 2>/dev/null | tail -1)
-        echo "  $name: COMPLETE ($acc)"
+        acc=$(grep -oE "best (val|test) acc [0-9.]+" "$r/train.log" 2>/dev/null | tail -1)
+        tst=$(cat "$r/final_test.txt" 2>/dev/null | tr "\n" " ")
+        echo "  $name: COMPLETE ($acc) $tst"
     elif [[ -f "$r/ckpt.pth" ]]; then
         ep=$(grep -oE "checkpoint saved \(epoch [0-9]+" "$r/train.log" 2>/dev/null | tail -1 | grep -oE "[0-9]+$")
         echo "  $name: in progress, last checkpoint epoch ${ep:-?}"
