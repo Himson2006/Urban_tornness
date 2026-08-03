@@ -20,6 +20,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
+import random
 import sys
 from pathlib import Path
 
@@ -113,6 +115,32 @@ def build_loaders(args):
             tag, len(tr), len(te), tr.ped_id.nunique(), te.ped_id.nunique())
 
 
+def save_ckpt(path: Path, **state) -> None:
+    """Atomic checkpoint write: temp file then rename.
+
+    A kill signal partway through a multi-hundred-MB torch.save leaves a
+    truncated file that fails to load. Renaming is atomic on POSIX, so the
+    checkpoint at `path` is always either the previous good one or the new one.
+    """
+    tmp = path.with_suffix(".tmp")
+    torch.save(state, tmp)
+    os.replace(tmp, path)
+
+
+def rng_state() -> dict:
+    return {"torch": torch.get_rng_state(),
+            "cuda": torch.cuda.get_rng_state_all(),
+            "numpy": np.random.get_state(),
+            "python": random.getstate()}
+
+
+def load_rng(s: dict) -> None:
+    torch.set_rng_state(s["torch"])
+    torch.cuda.set_rng_state_all(s["cuda"])
+    np.random.set_state(s["numpy"])
+    random.setstate(s["python"])
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--crops", type=Path, default=ROOT / "data/pie_crops")
@@ -135,9 +163,10 @@ def main():
                     help="keep 1 in N frames; adjacent frames are near-duplicates")
     ap.add_argument("--min-bbox-h", type=float, default=40.0)
     ap.add_argument("--gpu", default="0")
+    ap.add_argument("--no-resume", action="store_true",
+                    help="ignore any existing checkpoint and start from scratch")
     args = ap.parse_args()
 
-    import os
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
     (train_loader, push_loader, test_loader,
@@ -146,6 +175,13 @@ def main():
     run_dir = args.out / f"{args.arch}_{tag}"
     makedir(str(run_dir))
     makedir(str(run_dir / "img"))
+
+    # Already finished? Nothing to do -- makes re-running the whole script safe.
+    if (run_dir / "DONE").exists() and not args.no_resume:
+        print(f"{run_dir} already complete (DONE marker); skipping. "
+              f"Use --no-resume to retrain.")
+        return
+
     log, logclose = create_logger(log_filename=str(run_dir / "train.log"))
     log(f"split={args.split} {tag} | train {n_tr:,} crops / {p_tr} peds "
         f"| test {n_te:,} crops / {p_te} peds")
@@ -176,8 +212,32 @@ def main():
     push_epochs = [e for e in range(args.epochs)
                    if e >= args.push_start and e % args.push_every == 0]
     best = 0.0
+    start_epoch = 0
 
-    for epoch in range(args.epochs):
+    ckpt_path = run_dir / "ckpt.pth"
+    if ckpt_path.exists() and not args.no_resume:
+        st = torch.load(ckpt_path, map_location="cuda", weights_only=False)
+        ppnet.load_state_dict(st["model"])
+        warm_opt.load_state_dict(st["warm_opt"])
+        joint_opt.load_state_dict(st["joint_opt"])
+        last_opt.load_state_dict(st["last_opt"])
+        joint_sched.load_state_dict(st["joint_sched"])
+        best = st["best"]
+        start_epoch = st["epoch"] + 1
+        try:
+            load_rng(st["rng"])
+        except Exception as e:      # different GPU count, say -- not fatal
+            log(f"could not restore RNG state ({e}); continuing")
+        log(f"RESUMED from {ckpt_path} at epoch {start_epoch} (best {best:.4f})")
+        if start_epoch >= args.epochs:
+            log("checkpoint is already at the final epoch; nothing to do")
+            (run_dir / "DONE").touch()
+            logclose()
+            return
+    else:
+        log("starting from scratch")
+
+    for epoch in range(start_epoch, args.epochs):
         log(f"epoch {epoch}")
         if epoch < args.warm_epochs:
             tnt.warm_only(model=ppnet_par, log=log)
@@ -217,10 +277,20 @@ def main():
                                class_specific=True, log=log)
             if acc > best:
                 best = acc
+                # tornness.py loads the whole pickled module, so keep saving it
                 torch.save(ppnet, run_dir / "best.pth")
                 log(f"  saved best.pth (acc {acc:.4f})")
 
+        # Checkpoint every epoch, after any push cycle has completed. Worst case
+        # an interrupt costs one epoch, not the whole run.
+        save_ckpt(ckpt_path, epoch=epoch, model=ppnet.state_dict(),
+                  warm_opt=warm_opt.state_dict(), joint_opt=joint_opt.state_dict(),
+                  last_opt=last_opt.state_dict(),
+                  joint_sched=joint_sched.state_dict(), best=best, rng=rng_state())
+        log(f"  checkpoint saved (epoch {epoch}, best {best:.4f})")
+
     torch.save(ppnet, run_dir / "final.pth")
+    (run_dir / "DONE").touch()
     log(f"done. best test acc {best:.4f}. run dir {run_dir}")
     logclose()
 
