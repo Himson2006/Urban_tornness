@@ -98,6 +98,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=Path, default=ROOT / "runs")
     ap.add_argument("--arch", default="resnet34")
+    ap.add_argument("--torn-metric", choices=["p_half", "margin"],
+                    default="p_half",
+                    help="p_half = |mean p(cross)-0.5|, matched to how "
+                         "annotators judged one window; margin = mean per-frame")
     ap.add_argument("--torn-quantile", type=float, default=0.25,
                     help="fraction of most-torn pedestrians analysed")
     ap.add_argument("--bootstrap", type=int, default=2000)
@@ -108,11 +112,20 @@ def main():
     ped = to_pedestrian_level(df)
     print(f"pedestrian-level rows: {len(ped):,}")
 
-    # torn = smallest margin. This is where scalar uncertainty gives up and the
-    # shape question becomes meaningful.
-    thr = ped.margin.quantile(a.torn_quantile)
-    torn = ped[ped.margin <= thr].reset_index(drop=True)
-    print(f"torn subset: {len(torn):,} pedestrians (margin <= {thr:.4f})")
+    # Two ways to call a pedestrian torn, reported side by side so the choice is
+    # visible rather than buried:
+    #
+    #   p_half  |mean p(cross) - 0.5|. Preferred, and chosen a priori: annotators
+    #           gave ONE judgement for the whole window, so the model's analogue
+    #           is its aggregate probability over that window, not the average of
+    #           per-frame margins.
+    #   margin  mean per-frame margin. Sensitive to frame-level saturation.
+    ped["p_half"] = (ped.p_cross - 0.5).abs()
+    key = "p_half" if a.torn_metric == "p_half" else "margin"
+    thr = ped[key].quantile(a.torn_quantile)
+    torn = ped[ped[key] <= thr].reset_index(drop=True)
+    print(f"torn metric: {key}")
+    print(f"torn subset: {len(torn):,} pedestrians ({key} <= {thr:.4f})")
     print(f"  their human_disagreement: mean {torn.human_disagreement.mean():.3f} "
           f"vs {ped.human_disagreement.mean():.3f} overall")
 
@@ -155,12 +168,11 @@ def main():
     # Is the "torn" subset actually torn? If the model is saturated, margin's
     # lower quartile still sits near 1.0 and this experiment has not run at all.
     print(f"\n=== is the torn subset actually torn? ===")
-    q = ped.margin.quantile([0.01, 0.05, 0.10, 0.25, 0.50]).round(4)
+    q = ped[key].quantile([0.01, 0.05, 0.10, 0.25, 0.50]).round(4)
     print("  margin quantiles: " + ", ".join(f"p{int(k*100)}={v}" for k, v in q.items()))
-    frac = (ped.margin < 0.5).mean()
-    print(f"  pedestrians with margin < 0.50: {frac:.4f}  "
+    print(f"  pedestrians with margin < 0.50: {(ped.margin < 0.5).mean():.4f}  "
           f"(< 0.20: {(ped.margin < 0.2).mean():.4f})")
-    saturated = thr > 0.9
+    saturated = (key == "margin" and thr > 0.9) or (key == "p_half" and thr > 0.45)
     if saturated:
         print("  !! SATURATED: even the most-torn quartile is near-certain.")
         print("     The model outputs p~0/1 everywhere, so there are no torn")
