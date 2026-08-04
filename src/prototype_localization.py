@@ -95,11 +95,20 @@ def main():
     df.to_csv(dest, index=False)
 
     frac = 1.0 / a.crop_scale
+    # Chance baseline matters: the box covers frac^2 of the frame area, so
+    # "56% inside" means opposite things at crop_scale 1.3 (chance 59%) and
+    # 2.0 (chance 25%). Always compare against chance, never the raw rate.
+    chance = frac ** 2
+    obs = df.inside_box.mean()
+    verdict = ("BELOW chance -- prototypes avoid the pedestrian" if obs < chance - 0.05
+               else "at chance -- no preference for the pedestrian"
+               if obs <= chance + 0.05 else "above chance -- drawn to the pedestrian")
     print(f"{a.run.name} | crop_scale {a.crop_scale} -> pedestrian box occupies "
-          f"the central {frac:.0%} of the frame")
+          f"the central {frac:.0%} of the frame ({chance:.0%} of its area)")
     print(f"{len(df)} prototypes\n")
-    print(f"  peaks INSIDE the pedestrian box : {df.inside_box.mean():.1%}")
-    print(f"  peaks OUTSIDE                   : {1-df.inside_box.mean():.1%}\n")
+    print(f"  peaks INSIDE the pedestrian box : {obs:.1%}  "
+          f"(chance {chance:.0%}) -> {verdict}")
+    print(f"  peaks OUTSIDE                   : {1-obs:.1%}\n")
     print("  band distribution:")
     vc = df.band.value_counts()
     for k, v in vc.items():
