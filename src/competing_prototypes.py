@@ -138,6 +138,13 @@ def main():
     ap.add_argument("--fold", type=int, default=0)
     ap.add_argument("--n", type=int, default=12)
     ap.add_argument("--ped-id", default=None)
+    ap.add_argument("--mode", choices=["contested", "torn", "silent"],
+                    default="contested",
+                    help="contested: humans split (any model output); "
+                         "torn: humans split AND model torn -- the hand-off "
+                         "fires, this is the method figure; "
+                         "silent: humans split BUT model near-certain -- the "
+                         "failure figure")
     ap.add_argument("--gpu", default="0")
     a = ap.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = a.gpu
@@ -175,8 +182,24 @@ def main():
     if a.ped_id:
         chosen = [a.ped_id]
     else:
-        chosen = per[per.ip.between(0.35, 0.65)].sort_values(
-            "hd", ascending=False).head(a.n).index.tolist()
+        # model-side tornness, averaged over the window humans actually saw
+        pc = df.groupby("ped_id").p_cross_hint.mean() \
+            if "p_cross_hint" in df else None
+        split = per[per.ip.between(0.35, 0.65)]
+        if a.mode == "contested":
+            chosen = split.sort_values("hd", ascending=False).head(a.n).index.tolist()
+        else:
+            tor = pd.read_parquet(run / f"tornness_fold{a.fold}.parquet")
+            tor = tor[tor.in_exp_window].groupby("ped_id").p_cross.mean()
+            j = split.join(tor.rename("p"), how="inner").dropna()
+            j["torn"] = (j.p - 0.5).abs()
+            if a.mode == "torn":
+                j = j.sort_values("torn")                 # most torn first
+            else:
+                j = j.sort_values("torn", ascending=False)  # most certain first
+            chosen = j.head(a.n).index.tolist()
+            print(f"  mode={a.mode}: model |p-0.5| range "
+                  f"{j.torn.head(a.n).min():.3f}..{j.torn.head(a.n).max():.3f}")
     print(f"{len(chosen)} pedestrians; prototypes from {proto_dir}")
 
     from PIL import Image
@@ -191,7 +214,7 @@ def main():
         meta = {"ped_id": pid, "frame": int(r.frame), "action": r.action,
                 "look": r.look, "intention_prob": float(r.intention_prob),
                 "human_disagreement": float(r.human_disagreement)}
-        dest = a.out / f"handoff_{pid}.png"
+        dest = a.out / f"handoff_{a.mode}_{pid}.png"
         render(dest, raw_tf(img), e["picks"], e["probs"], meta,
                proto_dir, proto_meta)
         rows.append({**meta, "p_cross": float(e["probs"][1]),
@@ -201,7 +224,7 @@ def main():
         print(f"  {pid}: p_cross={e['probs'][1]:.2f} "
               f"human={meta['intention_prob']:.2f} -> {dest.name}")
 
-    pd.DataFrame(rows).to_csv(a.out / "handoff_cases.csv", index=False)
+    pd.DataFrame(rows).to_csv(a.out / f"handoff_cases_{a.mode}.csv", index=False)
     print(f"\nwrote {len(rows)} figures + {a.out/'handoff_cases.csv'}")
     print("Pick the clearest one or two as the paper's hero figures.")
 
