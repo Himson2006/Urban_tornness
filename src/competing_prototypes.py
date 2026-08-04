@@ -189,8 +189,15 @@ def main():
         if a.mode == "contested":
             chosen = split.sort_values("hd", ascending=False).head(a.n).index.tolist()
         else:
+            # Select on the SAME frame the figure renders -- the one closest to
+            # the critical point. Selecting on the window mean picks pedestrians
+            # whose average is 0.5 because the model flips between 0 and 1
+            # across frames, not because it is uncertain on any single frame.
             tor = pd.read_parquet(run / f"tornness_fold{a.fold}.parquet")
-            tor = tor[tor.in_exp_window].groupby("ped_id").p_cross.mean()
+            tor = tor[tor.in_exp_window].copy()
+            key = tor.frames_to_critical.abs()
+            tor = tor.loc[tor.assign(_k=key).groupby("ped_id")._k.idxmin()]
+            tor = tor.set_index("ped_id").p_cross
             j = split.join(tor.rename("p"), how="inner").dropna()
             j["torn"] = (j.p - 0.5).abs()
             if a.mode == "torn":
@@ -225,7 +232,8 @@ def main():
               f"human={meta['intention_prob']:.2f} -> {dest.name}")
 
     pd.DataFrame(rows).to_csv(a.out / f"handoff_cases_{a.mode}.csv", index=False)
-    print(f"\nwrote {len(rows)} figures + {a.out/'handoff_cases.csv'}")
+    print(f"\nwrote {len(rows)} figures + "
+          f"{a.out/f'handoff_cases_{a.mode}.csv'}")
     print("Pick the clearest one or two as the paper's hero figures.")
 
 
