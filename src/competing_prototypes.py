@@ -37,7 +37,8 @@ sys.path.insert(0, str(ROOT / "ProtoPNet"))
 sys.path.insert(0, str(ROOT / "src"))
 
 from preprocess import mean, std                                # noqa: E402
-from pie_dataset import PIECropDataset, kfold_assign, load_store  # noqa: E402
+from pie_dataset import (PIECropDataset, crop_transform, kfold_assign,
+                         load_store)  # noqa: E402
 
 IMG_SIZE = 224
 CLASS_NAME = {0: "will NOT cross", 1: "WILL cross"}
@@ -157,6 +158,10 @@ def main():
                          "fires, this is the method figure; "
                          "silent: humans split BUT model near-certain -- the "
                          "failure figure")
+    ap.add_argument("--crop-scale", type=float, default=2.0,
+                    help="effective crop as a multiple of the bbox; "
+                         "stored crops are 2.0. Lower values center-crop "
+                         "so the pedestrian dominates the frame.")
     ap.add_argument("--gpu", default="0")
     a = ap.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = a.gpu
@@ -184,9 +189,12 @@ def main():
         arr = np.load(bb[0])
         proto_meta = {j: {"src_index": int(arr[j, 0])} for j in range(len(arr))}
 
-    tf = T.Compose([T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor(),
-                    T.Normalize(mean=mean, std=std)])
-    raw_tf = T.Compose([T.Resize((IMG_SIZE, IMG_SIZE))])
+    _t = crop_transform(a.crop_scale)
+    _pre = [_t] if _t else []
+    tf = T.Compose(_pre + [T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor(),
+                           T.Normalize(mean=mean, std=std)])
+    # show the same pixels the model saw
+    raw_tf = T.Compose(_pre + [T.Resize((IMG_SIZE, IMG_SIZE))])
 
     # Pick the cases the paper is about: the model is torn AND humans were split.
     per = df.groupby("ped_id").agg(hd=("human_disagreement", "first"),

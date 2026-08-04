@@ -42,7 +42,8 @@ from helpers import makedir          # noqa: E402
 from log import create_logger         # noqa: E402
 from preprocess import mean, std, preprocess_input_function  # noqa: E402
 
-from pie_dataset import (PIECropDataset, kfold_assign, load_store)  # noqa: E402
+from pie_dataset import (PIECropDataset, crop_transform, kfold_assign,
+                         load_store)  # noqa: E402
 
 IMG_SIZE = 224
 
@@ -94,16 +95,18 @@ def build_loaders(args):
         tag = f"fold{args.fold}"
 
     norm = T.Normalize(mean=mean, std=std)
+    tighten = crop_transform(getattr(args, "crop_scale", 2.0))
+    pre = [tighten] if tighten else []
     # Modest augmentation only: prototypes get projected onto real patches, so
     # aggressive warping would make the exemplars unreadable as evidence.
-    train_tf = T.Compose([
+    train_tf = T.Compose(pre + [
         T.Resize((IMG_SIZE, IMG_SIZE)),
         T.RandomHorizontalFlip(),
         T.ColorJitter(0.2, 0.2, 0.2, 0.02),
         T.ToTensor(), norm,
     ])
-    eval_tf = T.Compose([T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor(), norm])
-    push_tf = T.Compose([T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor()])  # [0,1]
+    eval_tf = T.Compose(pre + [T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor(), norm])
+    push_tf = T.Compose(pre + [T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor()])  # [0,1]
 
     train_ds = TwoTuple(PIECropDataset(tr, args.crops, train_tf))
     push_ds = TwoTuple(PIECropDataset(tr, args.crops, push_tf))
@@ -221,6 +224,10 @@ def main():
     ap.add_argument("--frame-stride", type=int, default=5,
                     help="keep 1 in N frames; adjacent frames are near-duplicates")
     ap.add_argument("--min-bbox-h", type=float, default=40.0)
+    ap.add_argument("--crop-scale", type=float, default=2.0,
+                    help="effective crop as a multiple of the bbox; "
+                         "stored crops are 2.0. Lower values center-crop "
+                         "so the pedestrian dominates the frame.")
     ap.add_argument("--gpu", default="0",
                     help="GPU id, or a comma list ('0,1') to DataParallel one "
                          "run across several GPUs -- scale --batch with it")

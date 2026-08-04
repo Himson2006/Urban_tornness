@@ -98,6 +98,37 @@ def filter_split(df: pd.DataFrame, split: str | None,
     return out.reset_index(drop=True)
 
 
+class CenterFraction:
+    """Center-crop to a fraction of the stored crop.
+
+    Crops were extracted at 2x the bbox, so roughly 75% of each image's area is
+    background. With a 7x7 feature grid there are far more background patches
+    than pedestrian patches, and road texture is an easier, more stable signal
+    than posture -- prototypes localise to the ground plane instead of the
+    person. Tightening recovers an effective crop of `target x bbox` without
+    re-extracting anything from video.
+    """
+
+    def __init__(self, target_mult: float, stored_mult: float = 2.0):
+        self.frac = max(min(target_mult / stored_mult, 1.0), 0.05)
+
+    def __call__(self, img):
+        import torchvision.transforms.functional as TF
+        w, h = img.size
+        return TF.center_crop(img, [max(int(round(h * self.frac)), 8),
+                                    max(int(round(w * self.frac)), 8)])
+
+    def __repr__(self):
+        return f"CenterFraction(frac={self.frac:.3f})"
+
+
+def crop_transform(crop_scale: float, stored_mult: float = 2.0):
+    """None when no tightening is requested, so existing behaviour is unchanged."""
+    if crop_scale is None or crop_scale >= stored_mult:
+        return None
+    return CenterFraction(crop_scale, stored_mult)
+
+
 META_COLS = ["ped_id", "frame", "frames_to_critical", "in_exp_window",
              "bbox_h", "bbox_w", "occluded_flag", "truncated",
              "blur_var_laplacian", "mean_luma", "contrast_std",

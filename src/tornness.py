@@ -38,7 +38,8 @@ sys.path.insert(0, str(ROOT / "ProtoPNet"))
 sys.path.insert(0, str(ROOT / "src"))
 
 from preprocess import mean, std          # noqa: E402
-from pie_dataset import (PIECropDataset, kfold_assign, load_store)  # noqa: E402
+from pie_dataset import (PIECropDataset, crop_transform, kfold_assign,
+                         load_store)  # noqa: E402
 
 IMG_SIZE = 224
 
@@ -111,6 +112,10 @@ def main():
                     help="0 disables the MC-dropout baseline")
     ap.add_argument("--include-tail", action="store_true", default=True,
                     help="also score frames past critical_point (resolvability)")
+    ap.add_argument("--crop-scale", type=float, default=2.0,
+                    help="effective crop as a multiple of the bbox; "
+                         "stored crops are 2.0. Lower values center-crop "
+                         "so the pedestrian dominates the frame.")
     ap.add_argument("--gpu", default="0")
     a = ap.parse_args()
 
@@ -138,7 +143,9 @@ def main():
     proto_class = ppnet.prototype_class_identity.argmax(1).cuda()  # (n_proto,)
     print(f"prototypes per class: {torch.bincount(proto_class).tolist()}")
 
-    tf = T.Compose([T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor(),
+    _t = crop_transform(a.crop_scale)
+    tf = T.Compose(([_t] if _t else []) +
+                   [T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor(),
                     T.Normalize(mean=mean, std=std)])
     ds = PIECropDataset(df, a.crops, tf)
     loader = torch.utils.data.DataLoader(

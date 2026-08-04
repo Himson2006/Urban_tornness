@@ -35,7 +35,8 @@ sys.path.insert(0, str(ROOT / "ProtoPNet"))
 sys.path.insert(0, str(ROOT / "src"))
 
 from preprocess import mean, std                                   # noqa: E402
-from pie_dataset import PIECropDataset, kfold_assign, load_store    # noqa: E402
+from pie_dataset import (PIECropDataset, crop_transform, kfold_assign,
+                         load_store)    # noqa: E402
 
 IMG_SIZE = 224
 
@@ -143,6 +144,10 @@ def main():
     ap.add_argument("--batch", type=int, default=128)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--min-bbox-h", type=float, default=40.0)
+    ap.add_argument("--crop-scale", type=float, default=2.0,
+                    help="effective crop as a multiple of the bbox; "
+                         "stored crops are 2.0. Lower values center-crop "
+                         "so the pedestrian dominates the frame.")
     ap.add_argument("--gpu", default="0")
     a = ap.parse_args()
 
@@ -161,7 +166,9 @@ def main():
     df = df.reset_index(drop=True)
 
     ppnet = torch.load(a.ckpt, map_location="cuda", weights_only=False).cuda().eval()
-    tf = T.Compose([T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor(),
+    _t = crop_transform(a.crop_scale)
+    tf = T.Compose(([_t] if _t else []) +
+                   [T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor(),
                     T.Normalize(mean=mean, std=std)])
     loader = torch.utils.data.DataLoader(
         PIECropDataset(df, a.crops, tf), batch_size=a.batch, shuffle=False,
