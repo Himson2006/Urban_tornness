@@ -1,0 +1,593 @@
+%
+% File hicss.tex
+%
+% Contact: Holm Smidt, hicss@hawaii.edu
+%%
+%%
+%% Based on the style files for ACL 2015 by
+%% car@ir.hit.edu.cn, gdzhou@suda.edu.cn
+
+
+\documentclass[10pt]{article}
+\input{hicss-packages.tex}
+\newcommand{\sansserifformat}[1]{\fontfamily{cmss}{ #1}}%
+
+% ---- Packages needed for the Fig.1/Fig.2 TikZ diagrams (see paper/ .tex) ----
+% If any of these are already pulled in by hicss-packages.tex, the re-load is
+% harmless. amssymb is used for math symbols in the method section.
+\usepackage{amssymb}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,backgrounds,calc}
+
+% Convenience macro for our method's name.
+\newcommand{\method}{UA-ProtoPNet}
+
+\setlength\titlebox{7cm}
+
+% You can expand the titlebox if you need extra space
+% to show all the authors. Please do not make the titlebox
+% smaller than 5cm (the original size).
+% 5cm is the default for a single row list of authors
+
+
+% title for manuscript without author info
+\title{Explaining Why, Not Just How Much: Competing-Prototype Uncertainty
+for Human--AI Collaboration in Skin-Lesion Screening}
+
+% title for final manuscript
+% comment for initial manuscript
+% \title{...}
+
+% Comment this for initial manuscript
+% Uncomment this for final manuscript
+ \author{Himson Chapagain \\
+  Texas State University \\
+  {\underline{rnx16@txstate.edu}} \\ }
+
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+When a clinical AI system is uncertain, the quality of the hand-off to a human
+expert determines patient safety outcomes. Yet most systems hand the clinician
+a label and, at best, a scalar uncertainty score: they convey \emph{that} a
+model is unsure but not \emph{why}, offering no basis for action at the point
+of hand-off. We present \method{}, an interpretable classifier that explains
+its uncertainty by surfacing the competing prototypical exemplars driving an
+ambiguous decision---when torn between melanoma and a benign nevus, it shows a
+real, provenance-labeled example of each. The explanation is grounded in the
+model's actual decision: the top competing classes by logit and, for each, the
+prototype contributing most to that class. On HAM10000 (dermoscopy), \method{}
+matches standard ProtoPNet accuracy while uniquely providing case-level
+explanations of its uncertainty. On LIDC/LUNA22 we further show, across random
+seeds, that no method---including Monte-Carlo Dropout and Deep
+Ensembles---predicts inter-radiologist disagreement from images, arguing that
+diagnostic ambiguity should be \emph{surfaced} to the clinician rather than
+silently resolved.
+\end{abstract}
+
+\subsubsection*{Keywords:}
+
+Explainable AI; uncertainty quantification; human--AI collaboration; clinical
+decision support; medical image classification.
+
+
+\section{Introduction}
+
+Artificial intelligence is moving from research benchmarks into the front line
+clinical triage: dermoscopy classifiers screen skin lesions~\cite{esteva2017dermatologist} and CT (Computed Tomography) models flag
+lung nodules~\cite{setio2017luna}, often as a first pass before a specialist. In these settings, the
+unit of value is not a standalone prediction but a \emph{collaboration}: the
+model proposes, and a clinician might accept or deny. The moment that matters most is
+therefore the \emph{hand-off}---when the model is unsure and must consult/enlist the
+human. When that hand-off procedure is a black-box deferral, patient safety is at risk: a clinician
+handed an opaque or black-box deferral has no actionable interpretation or explanation to make the final decision.
+In our work, we redesign that hand-off procedure.
+
+Most deployed systems handle this moment poorly. They output a class label and,
+if anything, a scalar uncertainty or confidence number. A score of ``$U = 0.84$''
+tells a clinician \emph{that} the model hesitated, but not \emph{about what}, or
+\emph{why}. It is an alarm without an explanation---a deferral that enlists the
+human without helping them. Figure~\ref{fig:workflow} presents the
+collaboration workflow this paper proposes: one in which uncertain cases are
+escalated not with a score, but with the concrete competing evidence driving the
+model's doubt.
+
+Previously, two research works,  each addressed half of the problem. Uncertainty
+quantification methods---Monte-Carlo (MC) Dropout
+\parencite{gal2016dropout} and Deep Ensembles
+\parencite{lakshminarayanan2017ensembles}---estimate \emph{how much} a model is
+unsure, but as opaque scalars: they cannot say which classes or features drive
+the doubt. Interpretable models such as ProtoPNet
+\parencite{chen2019protopnet} explain a \emph{prediction} by pointing to
+prototypical training exemplars (``this looks like that''), but they explain the
+chosen class, not the \emph{uncertainty} between classes. Neither thread
+delivers what a clinical hand-off needs: an explanation of the ambiguity itself.
+
+We close this gap with \method{} (Uncertainty-Aware ProtoPNet). When the model
+is torn, it produces a \emph{competing-prototype explanation}: it identifies the
+two classes the decision is actually split between and, for each, retrieves the
+real training exemplar most responsible for that class's score. For an uncertain
+pigmented lesion, this means showing a histopathology-confirmed melanoma
+exemplar \emph{and} a benign nevus exemplar side by side (Figure~\ref{fig:workflow}), alongside the model's
+class-probability distribution and an uncertainty score
+. The clinician sees not just that the model is
+unsure, but the concrete visual evidence pulling it in each direction---turning
+an opaque/black-box deferral into a well-explained hand-off.
+
+Crucially, the explanation is \emph{grounded in the decision}. A naive
+prototype-similarity ranking surfaces clinically irrelevant ``magnet''
+prototypes, because raw per-class similarities are near-uniform; the class
+separation lives in the linear decision layer. We therefore derive the competing
+prototypes from the model's logits and their prototype contributions, therefore, the
+explanation always reflects the classes the model is genuinely weighing.
+
+Our contribution is three-folds:
+\begin{itemize}
+\setlength\itemsep{0.1em}
+\item A \textbf{clinical hand-off workflow design} for uncertainty-aware
+human--AI collaboration in medical image triage: an interpretable,
+uncertainty-aware system that routes confident cases to automated triage and
+escalates uncertain cases to the clinician with actionable evidence, not just a
+score (Figures~\ref{fig:arch} and~\ref{fig:workflow}).
+\item A \textbf{decision-grounded competing-prototype explanation mechanism}
+that makes the hand-off actionable: when the model is torn, it surfaces the two
+real, provenance-labeled training exemplars driving the ambiguity---turning an
+opaque deferral into an informed clinical judgment
+(Section~\ref{sec:results}, Figure~\ref{fig:hero}).
+\item A rigorous \textbf{empirical finding that aleatoric uncertainty is not
+image-predictable}: no evaluated method---including MC-Dropout and Deep
+Ensembles---can predict inter-radiologist disagreement from lung nodule images,
+arguing that \emph{surfacing} ambiguity to clinicians is the only responsible
+design choice rather than attempting to resolve it
+(Figure~\ref{fig:scatter}, Table~\ref{tab:negative}).
+\end{itemize}
+
+
+\section{Related Work}
+
+\textbf{AI for medical-image triage.} Deep classifiers approach specialist-level
+performance on dermoscopy \parencite{esteva2017dermatologist,
+tschandl2018ham10000} and lung-nodule analysis \parencite{armato2011lidc,
+setio2017luna}. As these tools enter screening workflows, attention has shifted
+from raw accuracy to how they integrate with human decision-making
+\parencite{topol2019high}.
+
+\textbf{Uncertainty quantification.} MC-Dropout \parencite{gal2016dropout} and
+Deep Ensembles \parencite{lakshminarayanan2017ensembles} are the standard tools
+for estimating predictive uncertainty, and calibration is commonly assessed via
+the Expected Calibration Error \parencite{guo2017calibration}. In medicine,
+uncertainty is argued to be essential for safe deployment
+\parencite{begoli2019need, kompa2021second}. These methods, however, yield a
+scalar; they do not explain the source of the uncertainty.
+
+\textbf{Interpretable and prototype models.} Rather than post-hoc saliency,
+\textcite{rudin2019stop} argues for models interpretable by construction.
+ProtoPNet \parencite{chen2019protopnet} classifies by comparing image regions to
+learned prototypes that are projected onto real training patches. Prototype models explain the predicted class; we extend them to explain the
+\emph{uncertainty} between classes. Recent work has argued for jointly
+considering explainability and uncertainty in medical AI
+\parencite{Salvi2025uncertainty}; our approach instantiates this idea
+with prototype-based explanations grounded in competing decision evidence.
+
+\textbf{Human--AI collaboration and deferral.} A growing literature studies when and how AI should defer to humans
+\parencite{mozannar2020consistent} and how explanations shape trust and reliance
+\parencite{ghassemi2021false}. A central concern in this literature is
+\emph{appropriate reliance}---calibrating human trust so clinicians accept
+AI recommendations when the model is reliable and scrutinize them when it is
+not \parencite{ghassemi2021false,mozannar2020consistent}. Existing deferral systems, however, treat the hand-off as a binary routing
+decision; they do not specify what information the human receives at the moment
+of escalation, even in complex settings such as AI-supported sepsis diagnosis in
+the ICU \parencite{Zhang2024rethinking}. We contribute to this literature by
+operationalizing the hand-off itself as a first-class design object:
+\method{} determines not only \emph{when} to defer, but \emph{what} to surface
+to the clinician at the point of deferral.
+
+
+\section{Methodology}
+\label{sec:method}
+
+% =========================== Figure 2 (architecture) =========================
+% TO USE THE REAL FIGURE: replace the \includegraphics line below with
+%   \input{fig2_arch}
+
+\begin{figure*}[!htbp]\centering
+    \resizebox{\textwidth}{!}{%
+      \input{fig2_arch}
+    }% <-- uncomment this and delete the line above
+  \caption{\textbf{\method{} architecture.} Blue: standard ProtoPNet
+  (prototypes projected onto real training patches via the push step). Orange:
+  our extension deriving, from the same decision, (A) an uncertainty score and
+  (B) a decision-grounded competing-prototype explanation.}
+  \label{fig:arch}
+\end{figure*}
+
+\subsection{Background: ProtoPNet}
+
+A ProtoPNet \parencite{chen2019protopnet} comprises a convolutional backbone
+$f$, a set of $C{\times}K$ prototype vectors ($K$ per class for $C$ classes), a
+prototype similarity layer, and a linear classification layer. The backbone maps
+an input $x$ to a feature map; each prototype $p_{c,k}$ is compared to all
+spatial patches, and a global max-pool yields a single activation
+$a_{c,k}=\max_{\text{patches}} g(p_{c,k}, \cdot)$ measuring how strongly the
+strongest patch resembles that prototype, where $g$ converts an $L_2$ distance to
+a similarity. The activation vector $a\in\mathbb{R}^{CK}$ is mapped by a linear
+layer $W$ to class logits $z = Wa$ and probabilities $p=\mathrm{softmax}(z)$.
+A \emph{prototype push} step projects each prototype onto its nearest training
+patch, so every prototype is a viewable, real exemplar.
+
+\subsection{Decision-grounded Competing Prototypes}
+
+For any given input, \method{} interprets the model's \emph{uncertainty} by identifying
+conflicting classes and the exemplars driving each. A natural but
+flawed approach ranks classes by their max prototype similarity (``class
+evidence''); we find these are near-uniform across classes, so the top
+competitors are arbitrary high-similarity prototypes unrelated to the decision.
+Instead, we ground the explanation in the decision itself. Let
+$\hat{c}_1, \hat{c}_2$ be the top-two classes by logit $z$. For each competing
+class $c\in\{\hat{c}_1,\hat{c}_2\}$ we select the prototype contributing most to
+that class's logit,
+\begin{equation}
+k^\ast(c) \;=\; \operatorname*{arg\,max}_{k} \; a_{c,k}\, W_{c,k},
+\end{equation}
+and retrieve its pushed training patch (with its metadata, e.g.\ diagnosis,
+confirmation type, and body site). The result is a pair of real, provenance-labeled exemplars---one per competing class---which explains \emph{why} the model
+is uncertain (Figure~\ref{fig:arch}, branch~B).
+
+\subsection{Uncertainty Score}
+
+We quantify uncertainty as the normalized Shannon entropy of the predictive
+distribution,
+\begin{equation}
+U \;=\; -\frac{1}{\log C}\sum_{c=1}^{C} p_c \log p_c \;\in\; [0,1],
+\end{equation}
+with an optional temperature $T$ applied to the logits and calibrated on a
+validation split. Using the predictive distribution (rather than raw prototype
+similarities) ensures the scalar uncertainty and the competing-prototype
+explanation describe the \emph{same} decision. The model thus outputs, for every
+case, a prediction $\hat{y}$, an uncertainty $U$, and---when $U$ is high---the
+two competing exemplars (Figure~\ref{fig:workflow}).
+
+
+\section{Experimental Setup}
+\label{sec:setup}
+
+% =========================== Figure 1 (workflow) =============================
+% TO USE THE REAL FIGURE: replace the \includegraphics line below with
+%   \input{fig1_workflow}
+\begin{figure*}[!htbp]\centering
+    \resizebox{\textwidth}{!}{%
+      \input{fig1_workflow}
+    }% <-- uncomment this and delete the line above
+  \caption{\textbf{Human--AI collaboration workflow for uncertainty-aware
+  skin-lesion screening.} A conventional scalar-uncertainty model (top) reports
+  only \emph{that} it is uncertain; \method{} (bottom) routes confident cases to
+  automated triage, whereas on uncertain cases, produces a competing-prototype
+  explanation that turns an opaque deferral into an actionable clinician
+  hand-off.}
+  \label{fig:workflow}
+\end{figure*}
+
+\textbf{Datasets.} \emph{HAM10000} \parencite{tschandl2018ham10000} contains
+10{,}015 dermoscopic images across seven diagnostic classes (melanoma,
+melanocytic nevus, basal cell carcinoma, actinic keratosis, benign keratosis,
+dermatofibroma, vascular lesion). We split $70/15/15$ stratified by class and,
+critically, \emph{by lesion}: because multiple images can depict the same
+physical lesion, we assign each lesion entirely to one split to prevent
+train/test leakage that would inflate accuracy and calibration. Images are
+resized to $224{\times}224$ with ImageNet normalization and standard
+augmentation.
+
+\emph{LIDC/LUNA22} \parencite{armato2011lidc, venkadesh2022luna22} provides lung-nodule
+CT patches, each rated for malignancy on a 1--5 scale by up to four radiologists.
+The \emph{standard deviation} of these ratings is a ground-truth signal of
+inter-radiologist disagreement. We extract the centered axial slice of each
+nodule and crop to the nodule region (we found this crop essential: without it
+the nodule is a small fraction of the field of view and the model fails to
+learn). We study a binary benign-vs-malignant task on the confident nodules
+(mean rating $\le 2.5$ or $\ge 3.5$), holding out the indeterminate nodules
+(mean rating in $(2.5,3.5)$) as an ambiguous evaluation set. Single-channel
+patches are replicated to three channels for the ImageNet-pretrained backbone.
+
+\textbf{Baselines.} We compare \method{} against (i) a vanilla ProtoPNet, (ii)
+MC-Dropout \parencite{gal2016dropout} ($30$ stochastic passes; variance as
+uncertainty), and (iii) a Deep Ensemble \parencite{lakshminarayanan2017ensembles}
+(independently trained members; variance as uncertainty). All share the backbone
+and prototype configuration; only \method{} provides explanations.
+
+\textbf{Metrics.} We report classification accuracy; Expected Calibration Error
+(ECE, $\downarrow$) \parencite{guo2017calibration}; the AUROC of uncertainty for
+error detection ($\uparrow$); and, for LIDC/LUNA22, the Pearson correlation
+between model uncertainty and the radiologist-rating standard deviation, plus an
+image-independent \emph{difficulty} correlation (uncertainty vs.\ proximity of
+the mean malignancy to the decision boundary), which the model never observes
+during training.
+
+\textbf{Implementation.} The backbone is an ImageNet-pretrained ResNet-50 with
+$K{=}10$ prototypes per class. Training follows the ProtoPNet schedule
+(warm-up, joint optimization, prototype push, and final-layer fine-tuning). All
+metrics are reported as mean$\pm$std over multiple random seeds, with the data
+split held fixed so that only model initialization and training vary.
+
+
+\section{Results}
+\label{sec:results}
+
+% =========================== Table 1 (main comparison) =======================
+\begin{table*}[!htbp]\centering
+\caption{Classification and uncertainty metrics on HAM10000 (mean$\pm$std over
+three seeds). \method{} matches the accuracy of standard ProtoPNet while being
+the only method that provides a prototype-grounded explanation of its
+uncertainty (final row). Variance-based baselines (MC-Dropout, Ensemble) are
+better calibrated; \method{} and vanilla share a deterministic softmax. Best
+value per metric in \textbf{bold}.}
+\label{tab:main}
+\begin{tabular}{l cccc}
+\hline
+\textbf{Metric} & \textbf{Vanilla} & \textbf{MC Dropout} & \textbf{Ensemble}
+  & \textbf{\method{} (Ours)} \\
+\hline
+Accuracy ($\uparrow$)          & $0.69{\pm}0.02$ & $0.69{\pm}0.02$ & $\mathbf{0.72{\pm}0.01}$ & $0.69{\pm}0.02$ \\
+ECE ($\downarrow$)             & $0.25{\pm}0.01$ & $\mathbf{0.10{\pm}0.01}$ & $0.12{\pm}0.01$ & $0.25{\pm}0.02$ \\
+Uncertainty AUROC ($\uparrow$) & $0.69{\pm}0.11$ & $\mathbf{0.84{\pm}0.02}$ & $0.79{\pm}0.01$ & $0.70{\pm}0.09$ \\
+Prototype explanation          & No & No & No & \textbf{Yes} \\
+\hline
+\end{tabular}
+\end{table*}
+
+\subsection{\method{} Preserves Accuracy}
+
+Table~\ref{tab:main} reports classification and uncertainty metrics on HAM10000
+(mean$\pm$std over three seeds). Because \method{} adds an explanation layer
+without altering the classifier, its accuracy matches vanilla ProtoPNet (both
+$\approx 0.69$) and trails the best method---the ensemble ($0.72$)---by about
+three points. The scalar uncertainty metrics, however, are not where \method{}
+competes: the variance-based methods (MC-Dropout and the ensemble) are better
+calibrated (ECE $0.10$--$0.12$ vs.\ $0.25$) and detect errors better
+(AUROC $0.79$--$0.84$) than the single deterministic softmax shared by \method{}
+and vanilla ProtoPNet. The decisive distinction is the final row: \method{} is
+the only method that can \emph{explain} its uncertainty, at no accuracy cost
+relative to its ProtoPNet base.
+
+Crucially, \emph{no} scalar signal here captures genuine ambiguity. Uncertainty
+does not correlate with radiologist disagreement for any method
+(Section~\ref{sec:results}, Table~\ref{tab:negative}).The ``ambiguous'' classes
+are dominated by nevus---common and easy for the model---so that group shows
+lower uncertainty than the rare ``clear'' classes, making the contrast reflect
+class frequency rather than genuine ambiguity. Rather than a weakness of our method, this is its empirical
+motivation: when scalar uncertainty is uninformative or confounded, the
+actionable signal for a clinician is an \emph{explanation} of the ambiguity, not
+another number.
+
+\subsection{Detailed Explanation of Uncertain Prediction Case}
+
+Figure~\ref{fig:hero} demonstrates the scenario where the model misclassify a melanoma case as a benign case. 
+The lesion is in fact a melanoma, but the model assigns the highest probability
+to benign keratosis ($0.58$); rather than silently committing to that benign
+label, \method{} surfaces the competing exemplars---a histopathology-confirmed
+melanoma exemplar alongside the benign one---and shows that melanoma is a strong
+competing explanation ($0.40$). The explanation makes this near-miss more visible and explanatory,
+prompting clinician review precisely where a scalar ``uncertain'' ($U=0.55$)
+would have conveyed only that the model is uncertain. This is the interpretable
+hand-off of Figure~\ref{fig:workflow} instantiated on a real case.
+
+The scope of this work is explicitly stated here. The two competing exemplars and the
+class-probability distribution---which rest directly on the model's decision
+(logits and prototype contributions)---are the substance of the explanation. The
+matched-region boxes in the left panel are a localizing cue: as is well
+documented for prototype models, the region a prototype responds to most
+strongly need not be a pixel-level visual match to the prototype patch, since the
+similarity is computed in the network's learned feature space rather than in raw
+appearance \parencite{hoffmann2021looks}. We, therefore, read the figure as ``the
+model is split between a melanoma exemplar and a benign exemplar,'' not as ``this
+region looks identical to that patch,'' and present the boxes as supporting
+context rather than the claim itself.
+
+The behavior generalizes beyond the melanoma case. Figure~\ref{fig:hero2} demonstrates
+another ambiguous pair---actinic keratosis, a pre-malignant lesion, versus
+benign keratosis---where the model is again nearly split (probabilities $0.48$
+vs.\ $0.34$). Here the two retrieved exemplars are themselves visually similar
+keratotic patterns, which is exactly why the decision is ambiguous: rather than
+committing to a single label, \method{} presents both readings to the clinician and allows the
+clinician to weigh the pre-malignant against the benign interpretation. Across both
+cases, the explanation is the pair of real, provenance-labeled exemplars the
+decision is split between---something no scalar-uncertainty baseline can provide.
+
+
+% =========================== Figure 3 (hero explanation) =====================
+\begin{figure*}[!htbp]\centering
+  \includegraphics[width=0.95\linewidth]{fig3_hero}
+  \caption{\textbf{Competing-prototype explanation of an uncertain prediction
+  (\method{}).} Left: input lesion with the two competing prototypes' activation
+  regions (red: predicted class; blue: runner-up). Center: the two competing
+  training exemplars, with class, provenance, and similarity. Right: the model's
+  predicted class distribution and uncertainty $U$.}
+  \label{fig:hero}
+\end{figure*}
+\begin{figure*}[!htbp]\centering
+  \includegraphics[width=0.95\linewidth]{fig_example2}
+  \caption{\textbf{A second competing-prototype explanation
+  (actinic vs.\ benign keratosis).} A keratotic lesion (ground truth: benign
+  keratosis) on which the model is split between actinic keratosis ($0.48$) and
+  benign keratosis ($0.34$), $U=0.81$. Both competing exemplars are
+  histopathology-confirmed and are visually similar keratotic patterns---which
+  is precisely why the decision is ambiguous. As in Figure~\ref{fig:hero}, the
+  matched-region boxes localize where each prototype responds; the two competing
+  exemplars and the class distribution carry the explanation.}
+  \label{fig:hero2}
+\end{figure*}
+
+\subsection{Uncertainty across Classes}
+
+Figure~\ref{fig:dist} shows the distribution of \method{}'s uncertainty by
+class. The pattern is driven by class frequency rather than visual ambiguity:
+the visually ambiguous classes (melanoma, nevus, benign keratosis) are
+dominated by the majority nevus class, on which the model is typically
+confident, whereas the rarer, visually distinct classes attract higher
+uncertainty. A class-level ``ambiguous-vs-clear'' contrast therefore does not
+isolate genuine ambiguity, which is why we do not report it as an
+uncertainty-quality metric and instead emphasize case-level explanations
+(Figure~\ref{fig:hero}).
+
+% =========================== Figure 4 (distribution) =========================
+\begin{figure}[tb]\centering
+  \includegraphics[width=0.95\linewidth]{uncertainty_distribution}
+  \caption{\textbf{Distribution of uncertainty by class (HAM10000 test set).}
+  Each violin shows the per-class spread of \method{}'s uncertainty $U$; the
+  dashed line marks a reference median ($\approx 0.28$). Per-class uncertainty
+  tracks class frequency more than visual ambiguity (Section~\ref{sec:results}).}
+  \label{fig:dist}
+\end{figure}
+
+\subsection{Inter-Radiologist Disagreement is not Image-Predictable}
+
+An ususal hypothesis is that an effective uncertainty estimator would track
+\emph{aleatoric} uncertainty---the genuine ambiguity captured by radiologist
+disagreement. On LIDC/LUNA22 we test this directly. Figure~\ref{fig:scatter}
+plots model uncertainty against the standard deviation of radiologist malignancy
+ratings, and Table~\ref{tab:negative} reports the correlation for every method.
+The result is unambiguous and robust across seeds: \emph{no} method
+—including MC-Dropout and Deep Ensembles, which are designed for aleatoric uncertainty
+—achieves a correlation distinguishable from zero (all $|r|\!<\!0.06$), and the
+same holds for the image-independent difficulty correlation. Importantly, this
+is not because the classifier failed to learn the task: on the binary
+benign-vs-malignant nodule problem \method{} reaches $0.71\!\pm\!0.03$ accuracy,
+comparable to the ensemble ($0.72\!\pm\!0.07$), so the models clearly capture
+malignancy-relevant content---they simply cannot predict inter-human annotation (inter-radiologist)
+\emph{disagreement}. We interpret this not as a failure of a particular model
+but as evidence that disagreement is dominated by the subjectivity of human annotation rather than
+recoverable image content. This finding directly motivates our design stance:
+when ambiguity cannot be \emph{predicted}, the responsible system should
+\emph{report} it, with an explanation, to the human.
+
+% =========================== Figure 5 (scatter) ==============================
+\begin{figure}[tb]\centering
+  \includegraphics[width=0.95\linewidth]{correlation_scatter}
+  \caption{\textbf{Model uncertainty vs.\ inter-radiologist disagreement
+(LIDC/LUNA22),} colored by ground-truth label. Uncertainty does not track
+disagreement: the indeterminate (orange) nodules span the full uncertainty range
+and the trend is flat (negligible $|r|<0.1$; Table~\ref{tab:negative}).}
+  \label{fig:scatter}
+\end{figure}
+
+% =========================== Table 2 (negative result) =======================
+\begin{table}[tb]\centering
+\caption{Inter-radiologist disagreement is not image-predictable: Pearson
+correlation (mean$\pm$std over three seeds) between each method's uncertainty and
+the std of radiologists' malignancy ratings on LIDC/LUNA22. All values are
+indistinguishable from zero.}
+\label{tab:negative}
+\begin{tabular}{l c}
+\hline
+\textbf{Method} & \textbf{Pearson $r$ (vs.\ radiologist std)} \\
+\hline
+Vanilla ProtoPNet & $-0.04{\pm}0.06$ \\
+MC Dropout        & $-0.05{\pm}0.04$ \\
+Deep Ensemble     & $\phantom{-}0.04{\pm}0.02$ \\
+\method{} (Ours)  & $-0.05{\pm}0.04$ \\
+\hline
+\end{tabular}
+\end{table}
+
+
+\section{Discussion: Implications for Human--AI Decision-Making}
+
+\textbf{Report, do not resolve, ambiguity.} Our negative result reframes the
+goal of clinical uncertainty estimation. If inter-expert disagreement cannot be
+predicted from the image, then a system that reports a confident label on a
+genuinely ambiguous case is misleading, and a system that reports only a scalar
+``uncertain'' is unhelpful. The constructive alternative is to make ambiguity
+\emph{legible}: demonstrate the human the competing evidence so they can adjudicate.
+\method{} operationalizes exactly this.
+
+\textbf{Explanations make uncertainty actionable.} A scalar uncertainty score is
+difficult to act on because it is uncalibrated to the clinician's own mental
+model. A pair of competing exemplars---``the model is split between this
+confirmed melanoma and this benign nevus''---is immediately interpretable in
+clinical terms and supports a concrete next step (biopsy, refer, or dismiss).
+This aligns uncertainty-aware AI with the way clinicians already reason by
+analogy and comparison.
+
+\textbf{Selective deferral and trust calibration.} The workflow of
+Figure~\ref{fig:workflow} is a selective-prediction system: confident cases are
+automated, uncertain cases are escalated with an explanation. Because the
+escalation carries \emph{evidence}, it supports appropriate reliance---trusting
+the model when its exemplars are coherent and scrutinizing it when they are
+not---rather than the blanket over- or under-reliance with opaque/black-box scoring reporting .
+
+\textbf{Design implications.} For teledermatology and screening triage, our
+results advocate (i) prioritizing interpretable, exemplar-based explanations of
+uncertainty over additional scalar uncertainty machinery, and (ii) designing the
+hand-off, not just the prediction, as a first-class design component of the system.
+
+
+\section{Limitations and Future Work}
+
+Our current work has several limitations. First, the explanations and
+the dermatology evaluation use a single 2D modality; richer 3D context may
+change the lung-nodule findings. Second, our central result on aleatoric
+uncertainty is a \emph{negative} one; while robust across methods and seeds, it
+establishes the absence of an image-predictable signal rather than a new
+predictive capability. Third, \method{}'s quantitative advantage over baselines
+is in interpretability rather than scalar metrics, on which it is competitive
+but not dominant. Fourth, \method{} inherits a known property of prototype
+models: the spatial region a prototype matches need not be a pixel-level visual
+match to the prototype patch, because similarity is measured in the network's
+learned feature space rather than in raw appearance
+\parencite{hoffmann2021looks}. This is why we treat the competing exemplars and
+the decision distribution as the explanation and the matched-region boxes only as
+a localizing cue (Section~\ref{sec:results}); it does not affect the validity of
+the competing-class account, which is grounded in the logits. Finally, we evaluate the explanations computationally and qualitatively.
+A controlled clinician study is the natural next step, and its design is
+straightforward: participants randomized to scalar-uncertainty versus
+competing-prototype conditions, with three primary outcomes---
+(1) \emph{decision accuracy} on ambiguous cases where ground truth is known,
+(2) \emph{trust calibration}, measured as the correlation between stated
+confidence and actual correctness across confident and uncertain model outputs,
+and (3) \emph{time-to-decision}, capturing whether a richer explanation
+accelerates or burdens the hand-off. The negative result on inter-radiologist
+disagreement (Section~\ref{sec:results}) further motivates this study: if
+ambiguity cannot be predicted from images, the value of surfacing/reporting it must
+ultimately be measured in human decision outcomes.
+
+
+\section{Conclusion}
+
+We presented \method{}, an interpretable classifier that explains \emph{why} it
+is uncertain by surfacing/reporting the competing prototypical exemplars driving an
+ambiguous decision. The explanation is grounded in the model's actual decision,
+preserves classification accuracy, and uniquely supports an informed clinical
+hand-off that scalar-uncertainty baselines cannot. We further showed, rigorously,
+that inter-radiologist disagreement is not recoverable from nodule images by any
+evaluated method---an argument for surfacing/reporting ambiguity to clinicians rather than
+silently resolving it. We advocate for interpretable, uncertainty-aware hand-off as an effective
+ design pattern for human–AI collaboration in medical-image triage.
+
+
+% if added before the last page, this command can help balancing columns
+%\addtolength{\textheight}{-.2cm}
+
+% ----------------------------------------------------------------------------
+% References. The HICSS template uses biblatex (\printbibliography). Add the
+% following keys to sample.bib (BibTeX/biblatex). Suggested sources:
+%   chen2019protopnet      -- Chen et al., "This Looks Like That", NeurIPS 2019
+%   gal2016dropout         -- Gal & Ghahramani, MC Dropout, ICML 2016
+%   lakshminarayanan2017ensembles -- Lakshminarayanan et al., Deep Ensembles, NeurIPS 2017
+%   guo2017calibration     -- Guo et al., On Calibration of Modern NNs, ICML 2017
+%   tschandl2018ham10000   -- Tschandl et al., HAM10000, Scientific Data 2018
+%   armato2011lidc         -- Armato et al., LIDC-IDRI, Medical Physics 2011
+%   setio2017luna          -- Setio et al., LUNA16, Medical Image Analysis 2017
+%   esteva2017dermatologist-- Esteva et al., Nature 2017
+%   rudin2019stop          -- Rudin, Stop Explaining Black Boxes, Nature MI 2019
+%   guo... / begoli2019need-- Begoli et al., Nature MI 2019
+%   kompa2021second        -- Kompa et al., npj Digital Medicine 2021
+%   mozannar2020consistent -- Mozannar & Sontag, Learning to Defer, ICML 2020
+%   ghassemi2021false      -- Ghassemi et al., The false hope of XAI, Lancet Digital Health 2021
+%   topol2019high          -- Topol, High-performance medicine, Nature Medicine 2019
+% ----------------------------------------------------------------------------
+
+\printbibliography
+
+\end{document}
