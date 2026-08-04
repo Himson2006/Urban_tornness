@@ -231,9 +231,18 @@ def main():
         print(f"  {pid}: p_cross={e['probs'][1]:.2f} "
               f"human={meta['intention_prob']:.2f} -> {dest.name}")
 
-    pd.DataFrame(rows).to_csv(a.out / f"handoff_cases_{a.mode}.csv", index=False)
-    print(f"\nwrote {len(rows)} figures + "
-          f"{a.out/f'handoff_cases_{a.mode}.csv'}")
+    dest_csv = a.out / f"handoff_cases_{a.mode}_fold{a.fold}.csv"
+    df_rows = pd.DataFrame(rows)
+    df_rows["fold"] = a.fold
+    df_rows.to_csv(dest_csv, index=False)
+    # rolling union across folds, so a sweep leaves one table to sort
+    allc = a.out / f"handoff_cases_{a.mode}_all.csv"
+    prev = pd.read_parquet(allc) if False else (
+        pd.read_csv(allc) if allc.exists() else None)
+    comb = pd.concat([prev, df_rows]) if prev is not None else df_rows
+    comb.drop_duplicates(subset=["ped_id"], keep="last").to_csv(allc, index=False)
+    print(f"\nwrote {len(rows)} figures + {dest_csv.name} "
+          f"(union: {allc.name})")
     print("Pick the clearest one or two as the paper's hero figures.")
 
 
