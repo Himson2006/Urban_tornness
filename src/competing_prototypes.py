@@ -94,14 +94,26 @@ def render(fig_path, crop_img, picks, probs, meta, proto_dir, proto_meta):
     # competing exemplars: class 1 first so "will cross" reads left-to-right
     for col, c in enumerate((1, 0), start=1):
         ax = fig.add_subplot(gs[0, col])
-        p = proto_dir / f"prototype-img{picks[c]['proto']}.png"
-        if p.exists():
-            ax.imshow(mpimg.imread(p))
-        else:
+        j = picks[c]["proto"]
+        # Prefer the full source crop with the activation heatmap. The bare
+        # `prototype-img{j}.png` is only the tight box around the activation
+        # peak, which shows a patch of road with no indication of what it is
+        # part of. Fall back through original, then the tight patch.
+        cands = [f"prototype-img-original_with_self_act{j}.png",
+                 f"prototype-img-original{j}.png",
+                 f"prototype-img{j}.png"]
+        shown = None
+        for cand in cands:
+            fp = proto_dir / cand
+            if fp.exists():
+                ax.imshow(mpimg.imread(fp))
+                shown = cand
+                break
+        if shown is None:
             ax.text(.5, .5, "prototype image\nnot found", ha="center",
                     va="center", fontsize=8)
-        pm = proto_meta.get(picks[c]["proto"], {})
-        sub = (f"proto #{picks[c]['proto']}  act {picks[c]['activation']:.2f}\n"
+        pm = proto_meta.get(j, {})
+        sub = (f"proto #{j}  act {picks[c]['activation']:.2f}  "
                f"contrib {picks[c]['contribution']:+.2f}")
         if pm:
             sub += (f"\nfrom {pm.get('ped_id','?')} "
