@@ -1,0 +1,493 @@
+%% UrbanAI'26 submission draft.
+%% Full research paper track (8-10 pages incl. references).
+%%
+%% Every number in this document is produced by the scripts in sidewalk/ and
+%% was verified against the data on 2026-08-05. Regenerate before submission:
+%% the city deployments are live and counts drift.
+%%
+%% For review, the CFP does not state whether the process is anonymous. If it
+%% is, switch to \documentclass[sigconf,anonymous]{acmart} and drop the author
+%% block. Confirm with the organisers before submitting.
+
+\documentclass[sigconf]{acmart}
+
+\AtBeginDocument{%
+  \providecommand\BibTeX{{Bib\TeX}}}
+
+\setcopyright{acmlicensed}
+\copyrightyear{2026}
+\acmYear{2026}
+\acmDOI{XXXXXXX.XXXXXXX}
+\acmConference[UrbanAI '26]{The 4th ACM SIGSPATIAL International Workshop on
+  Advances in Urban AI}{November 3, 2026}{Riverside, CA, USA}
+\acmISBN{978-1-4503-XXXX-X/26/11}
+
+\begin{document}
+
+\title{What Quality Control Removes: Contested Labels in Crowdsourced
+Urban Accessibility Data}
+
+\author{Himson Chapagain}
+\affiliation{%
+  \institution{Texas State University}
+  \city{San Marcos}
+  \state{Texas}
+  \country{USA}}
+\email{rnx16@txstate.edu}
+
+\begin{abstract}
+Cities increasingly rely on crowdsourced assessments of the built environment to
+decide where to spend accessibility budgets. Those assessments are cleaned
+before use, and cleaning treats reviewer disagreement as noise. Across
+811{,}368 labels from twelve Project Sidewalk deployments, we show that the
+platform's published quality criterion retains 54.5\% of reviewed labels overall
+but only 8.6\% of labels reviewers split on and 6.8\% of labels they were
+unsure about, discarding over 90\% of both in all twelve cities. The removal is
+spatially uneven, varying three- to eight-fold beyond sampling noise across
+neighbourhoods and surviving controls for what gets labelled where. It is also
+consequential for downstream models: training a validity classifier on the
+filtered record makes it assert more than 90\% confidence on 48\% of contested
+labels, against 30\% when the ambiguous cases are retained at matched sample
+size, with no gain in discriminative accuracy. The effect replicates across
+three model families. We argue that contested labels should be routed rather
+than deleted, and that the two kinds of disagreement require different
+destinations: better imagery for one, a policy decision for the other.
+\end{abstract}
+
+\begin{CCSXML}
+<ccs2012>
+<concept><concept_id>10003120.10003130.10003233</concept_id>
+<concept_desc>Human-centered computing~Collaborative and social computing systems and tools</concept_desc>
+<concept_significance>500</concept_significance></concept>
+<concept><concept_id>10002951.10003227.10003351</concept_id>
+<concept_desc>Information systems~Data mining</concept_desc>
+<concept_significance>300</concept_significance></concept>
+</ccs2012>
+\end{CCSXML}
+\ccsdesc[500]{Human-centered computing~Collaborative and social computing systems and tools}
+\ccsdesc[300]{Information systems~Data mining}
+
+\keywords{crowdsourcing, data quality, urban accessibility, annotator
+disagreement, model calibration, volunteered geographic information}
+
+\maketitle
+
+\section{Introduction}
+
+Whether a stretch of pavement is passable in a wheelchair is not always a
+question with an answer. A cracked slab is a hazard to one person and an
+inconvenience to another; whether a corner \emph{needs} a curb ramp depends on
+what counts as a pedestrian route. These are judgement calls, and cities now
+make them at scale by asking volunteers.
+
+Project Sidewalk~\cite{saha2019projectsidewalk} is among the largest such
+efforts. Volunteers examine street-level imagery and mark accessibility
+problems---missing curb ramps, surface defects, obstructions---and other
+volunteers review each mark as \emph{agree}, \emph{disagree}, or
+\emph{not sure}. The resulting labels feed accessibility audits, routing for
+wheelchair users, and municipal remediation priorities. Before any of that, the
+data is cleaned: labels that failed to attract sufficient agreement are filtered
+out~\cite{li2024labelaid}.
+
+That filtering step embeds an assumption worth examining. It treats a label
+reviewers argued about as defective, as though disagreement indicates a mistake
+by the original labeller. But disagreement among careful reviewers can also
+indicate that the underlying question is genuinely contested, which is a
+different thing and carries different consequences. If reviewers split over
+whether a particular crack rises to the level of a surface problem, that split
+is evidence about where a city's accessibility threshold actually sits and how
+widely it is shared. Deleting it does not resolve the ambiguity; it conceals it.
+
+Disagreement is also not one phenomenon. A reviewer can decline to endorse a
+label in two ways that look similar in aggregate and mean opposite things.
+Reviewers can \emph{split}: some confidently agree, others confidently
+disagree, and the argument is about where the standard lies. Or reviewers can be
+\emph{unsure}: nobody takes a position, because the image does not settle the
+question. The first is a disagreement about values, which more reviewing will
+not converge. The second is a disagreement about evidence, which better imagery
+could in principle fix. A pipeline that cannot tell them apart cannot route
+either correctly.
+
+Project Sidewalk is unusual in making the distinction separable. Most
+crowdsourcing interfaces offer only agreement or disagreement; the explicit
+``not sure'' option, recorded per reviewer alongside reviewer identity and
+position in the review sequence, is what makes the decomposition possible.
+
+We make three contributions:
+
+\begin{itemize}
+\setlength\itemsep{0.15em}
+\item \textbf{An audit of what quality control removes.} The published filter
+  retains over half of all reviewed labels but under a tenth of contested ones,
+  in every one of twelve cities, and the removal is spatially uneven by a
+  factor of three to eight beyond sampling noise
+  (Sections~\ref{sec:qc} and~\ref{sec:spatial}).
+\item \textbf{Evidence that filtering manufactures overconfidence.} A model
+  trained on the filtered record is far more certain about exactly the labels
+  reviewers could not agree on, at no gain in accuracy, across three model
+  families (Section~\ref{sec:calibration}).
+\item \textbf{An empirical decomposition of the disagreement itself} into a
+  standards component and an evidence component, with different sources,
+  corroborated independently by the labellers' own tags, and neither of which
+  resolves with additional review (Sections~\ref{sec:twokinds}--\ref{sec:resolve}).
+\end{itemize}
+
+A methodological thread runs alongside these. Each finding changed sign or
+magnitude when we controlled properly for who reviewed a label and which city it
+came from. We report the uncontrolled analyses beside the controlled ones,
+because in every case the uncontrolled version told a tidier story than the data
+supports, and because anyone repeating this work on similar data will meet the
+same trap.
+
+\section{Related Work}
+
+\textbf{Disagreement as signal.} A substantial literature argues that annotator
+disagreement carries information rather than noise. \citet{aroyo2015truth} frame
+inter-annotator disagreement as intrinsic to semantic annotation, and CrowdTruth
+\cite{dumitrache2018crowdtruth} operationalises this with metrics that model the
+interdependence of worker, input unit, and annotation---separating worker
+quality from unit ambiguity. Our label-versus-reviewer decomposition is an
+instance of that idea; our contribution is not the decomposition but what it
+reveals when applied to a deployed civic pipeline.
+
+\textbf{Learning from disagreement.} Training on aggregated hard labels is known
+to produce overconfident models, and preserving the label distribution improves
+calibration \cite{peterson2019human, uma2021learning}. Our calibration result
+applies this established effect to a real cleaning pipeline and measures its
+magnitude in a setting with policy consequences, rather than proposing a new
+learning method.
+
+\textbf{Bias in volunteered geographic information.} Coverage bias in
+crowdsourced spatial data is well documented: contributions concentrate in
+particular places and are shaped by who contributes \cite{haklay2010good,
+quattrone2015bias}. That literature concerns \emph{where volunteers choose to
+map}. We examine a different and less-studied mechanism: bias introduced at the
+\emph{retention} step, after data has been collected, by the filter that decides
+what survives.
+
+\textbf{Crowdsourced accessibility assessment.} Project Sidewalk
+\cite{saha2019projectsidewalk} and subsequent work on label quality
+\cite{li2024labelaid} establish the platform and its validation pipeline. We
+take that pipeline as our object of study.
+
+\section{Data}
+\label{sec:data}
+
+We use every label from the twelve live Project Sidewalk city deployments,
+retrieved through the platform's public API in August 2026: 811{,}368 labels in
+total, of which 177{,}599 carry at least three independent reviews. Those
+reviewed labels rest on 746{,}975 individual review decisions contributed by
+11{,}480 reviewers. Each label carries its type, a severity rating, optional
+tags and free text, geographic coordinates and neighbourhood, the labeller's
+identifier, and the full sequence of reviews with each reviewer's identity.
+
+We decompose each label's review record into two quantities. \emph{Split}
+measures how evenly the reviewers who took a position divided between agree and
+disagree, and is $1.0$ when they divided equally and $0$ when unanimous.
+\emph{Unsure} is the share of reviewers who declined to take a position. A label
+can score high on either, both, or neither. Where a categorical grouping is
+needed we call a label \emph{split} when its split score exceeds $0.6$ with
+fewer than 20\% unsure votes, and \emph{unsure} when at least a third of its
+reviewers answered ``not sure''.
+
+\section{Two Kinds of Disagreement}
+\label{sec:twokinds}
+
+Both populations are substantial. Reviewers split into opposing camps on
+23{,}638 labels (13.3\% of the reviewed record) and answered ``not sure'' at a
+rate of one third or more on 7{,}299 (4.1\%). The two measures are only weakly
+related ($\rho = 0.14$), the first indication that they are distinct phenomena
+rather than two readings of a single underlying difficulty.
+
+Disagreement is not uniform across the label taxonomy (Table~\ref{tab:types}).
+Missing curb ramps and signal-related labels draw the highest rates of splitting,
+consistent with judgements about whether an intervention \emph{ought} to exist
+rather than about what is visible. Obstacles and surface problems draw the
+highest rates of ``not sure''. Splitting also rises with the severity rating the
+original labeller assigned, from 10.9\% at severity 1 to 15.5\% at severity 2,
+which is what a disagreement about where a threshold sits would predict.
+
+\begin{table}[t]
+\caption{Disagreement by label type, twelve cities. Types differ in both the
+rate and the kind of disagreement they attract.}
+\label{tab:types}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Label type} & \textbf{$n$} & \textbf{Split} & \textbf{Unsure} & \textbf{QC keeps} \\
+\midrule
+Crosswalk       & 14{,}717 &  6.2\% & 0.9\% & 74.8\% \\
+CurbRamp        & 54{,}676 & 10.3\% & 1.8\% & 71.9\% \\
+NoCurbRamp      & 32{,}371 & 21.4\% & 2.8\% & 52.7\% \\
+Obstacle        & 26{,}102 & 12.5\% & 8.9\% & 31.1\% \\
+Signal          &  4{,}293 & 24.6\% & 1.1\% & 68.7\% \\
+SurfaceProblem  & 45{,}221 & 12.6\% & 6.4\% & 40.4\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Corroboration from the labellers' tags}
+
+The decomposition receives independent support from a field it never touched.
+Labellers may attach descriptive tags to a mark. Among split labels, the most
+frequent informative tags concern routing: \emph{no alternate route} (2{,}490
+labels) and \emph{alternate route present} (1{,}595). Among unsure labels, the
+most frequent concern visibility and occlusion: \emph{pole} (409),
+\emph{narrow sidewalk} (398), \emph{parked car} (306).
+
+Reviewers argue about whether a barrier \emph{matters}, and they are unsure when
+something \emph{blocks the view}. That the two populations attract different
+vocabulary, written by the original labellers rather than by the reviewers whose
+votes define the split, is stronger evidence for the distinction than any
+statistic computed from the votes themselves.
+
+\section{Where the Disagreement Lives}
+\label{sec:where}
+
+Reviewers are not interchangeable. Among the 3{,}333 reviewers with at least
+twenty reviews, ``not sure'' rates range from 0\% to 70\% with a median of
+3.0\%. A raw count of unsure votes on a label therefore confounds a property of
+the sidewalk with a property of whoever happened to review it.
+
+We separate the two by fitting an additive model
+$y_{ij} \sim \mu + a_i + b_j$ over individual review decisions, where $a_i$ is a
+label effect and $b_j$ a reviewer effect, estimated by alternating means and
+shrunk toward zero in proportion to the number of reviews supporting each label.
+
+The model must be fitted \emph{within} each city. Deployments differ in both
+their reviewer populations and their base rates, so a pooled fit absorbs
+between-city variation into the reviewer term and overstates it: the pooled
+estimate attributes 20.8\% of the variance in ``not sure'' responses to
+reviewers against 14.3\% to labels, whereas within-city estimates reverse that
+ordering in ten of twelve deployments.
+
+Fitted correctly, both outcomes are label-driven and differ in degree rather
+than kind (Table~\ref{tab:variance}). Splitting is a property of the label,
+exceeding the reviewer term by roughly five to one and doing so in all twelve
+cities. Uncertainty is only weakly so: reviewer identity accounts for about
+twice as much of the variance in ``not sure'' as in disagreement.
+
+\begin{table}[t]
+\caption{Variance in individual review decisions attributable to the label
+versus the reviewer, estimated within each city (median over twelve
+deployments).}
+\label{tab:variance}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Source} & \textbf{Disagree} & \textbf{Unsure} \\
+\midrule
+Label            & \textbf{52.0\%} & 27.1\% \\
+Reviewer         & 9.7\%           & 20.7\% \\
+Label:reviewer   & \textbf{5.3:1}  & 1.3:1 \\
+Label-dominated in & 12/12 cities  & 10/12 cities \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The practical consequence is that raw and reviewer-adjusted estimates of which
+labels are unclear correlate at only $\rho = 0.68$: removing reviewer tendency
+substantially reorders the population.
+
+\section{More Review Does Not Produce Consensus}
+\label{sec:resolve}
+
+The review records preserve each reviewer's identity and position within the
+label's review sequence. That position carries real ordering rather than being
+arbitrary: shuffling positions within each label collapses the between-reviewer
+variance in mean position from $0.024$ to $0.004$ ($z=195$), and reviewer mean
+positions span $0.00$ to $0.87$ where an arbitrary order would place every
+reviewer near $0.5$. The ordering is not alphabetical by reviewer identifier
+(6.2\% of labels are so ordered, against 6.7\% expected by chance), and
+reviewers who joined later occupy later positions ($\rho = 0.29$,
+$p < 10^{-26}$, using label creation order as an arrival proxy). We therefore
+treat position as sequence.
+
+Given that, we compare a label's first three reviews against its later ones
+\emph{within the same label}, which removes any selection effect arising from
+which labels attract additional review. We restrict to labels with at least six
+reviews and subtract each reviewer's estimated tendency, fitted within their own
+city.
+
+The result is a null, and it is the point. Neither form of disagreement declines
+over a label's lifetime. Uncertainty rises slightly and consistently: the
+adjusted delta is positive in eight of eleven deployments with sufficient data,
+median $+0.008$. Disagreement shows no consistent direction, positive in three
+of eleven, median $-0.005$.
+
+Two analyses we report but do not rely on illustrate why the controls matter.
+Without adjusting for reviewer tendency, uncertainty appears to \emph{decline}
+over a label's lifetime ($0.106 \rightarrow 0.096$); that apparent resolution is
+explained by early reviewers being more unsure-prone than later ones (mean
+reviewer effect $+0.043$ versus $+0.020$). And when reviewer effects are pooled
+across deployments rather than fitted within them, disagreement appears to rise
+sharply ($+0.026$); that disappears once each city's reviewers are modelled
+separately. Both artefacts point toward a tidier story than the data supports.
+
+\section{Quality Control Removes the Contested Cases}
+\label{sec:qc}
+
+Project Sidewalk's published quality criterion retains a label when it has more
+than two agreements and no more than two disagreements. Applied to our corpus it
+retains 54.5\% of reviewed labels overall (95\% CI [54.2, 54.7]). Applied to the
+contested populations it retains 8.6\% of split labels ([8.3, 9.0]) and 6.8\% of
+unsure ones ([6.2, 7.3])---discarding 91\% and 93\% respectively.
+
+This is not an artefact of any one deployment. Contested labels are retained
+below the city average in all twelve cities, and leaving any single city out
+moves the pooled figures by at most 1.3 percentage points; the largest shift, to
+9.9\% and 7.5\%, comes from excluding Seattle, which alone contributes 30\% of
+the reviewed corpus.
+
+The criterion also has a property worth stating plainly: because it requires
+more agreements than disagreements, every label it retains is one the majority
+endorsed. All of them are, by construction, ``correct''. The filter cannot
+define a training set on its own, and a realistic pipeline must pair it with a
+mirror rule selecting consensus negatives. Under that pairing, 54.5\% of the
+reviewed record is consensus-positive, 8.9\% consensus-negative, and
+\textbf{36.6\% is an ambiguous middle that is discarded entirely}.
+
+\section{Removal Is Spatially Uneven}
+\label{sec:spatial}
+
+Contested labels are not distributed uniformly across a city, so the filter
+removes evidence unevenly. Across 284 neighbourhood regions with at least 100
+reviewed labels, between-region variation in retention exceeds binomial
+sampling noise by a factor of 3.3 to 7.6 in every city. Seattle spans 11\% to
+71\% retention across its 83 regions; Chicago spans 20\% to 83\% across 78.
+
+The obvious explanation---that regions differ in what gets labelled there, and
+some label types are more contested---does not account for it. Holding label
+type composition fixed leaves spreads of 15 to 57 percentage points, and 68 of
+284 regions retain more than ten points below their type-expected rate.
+
+The consequence is that the accessibility map produced after cleaning is
+systematically more complete in some neighbourhoods than others. A city
+allocating remediation budget from that map sees fewer problems where labels
+were contested---not because there are fewer, but because the record was thinner
+after cleaning.
+
+\section{Filtering Manufactures Overconfidence}
+\label{sec:calibration}
+
+Downstream models are trained on what survives. If removing contested cases also
+removes a model's opportunity to learn that some cases are genuinely uncertain,
+then routine cleaning produces a system that is confident precisely where people
+disagree.
+
+We test this without touching an image. We predict whether a label will be
+judged correct from 39 features available at labelling time---label type,
+severity, tags, geometry, imagery age, and the labeller's leave-one-out
+history---excluding all review counts, which constitute the target. Folds are
+split by neighbourhood so no region appears in both training and test, and every
+regime is evaluated on the same held-out set. We compare four training regimes:
+\emph{filtered}, using only consensus labels as a real pipeline would;
+\emph{full\_sub}, subsampled to the filtered set's size but retaining the
+ambiguous middle; \emph{full}, all reviewed labels; and \emph{soft}, all labels
+with the agreement rate as a continuous target.
+
+\begin{table}[t]
+\caption{Predicting label validity under four training regimes, evaluated on the
+same held-out labels. ``Silent'' is the fraction of contested test labels the
+model calls with $p > 0.9$.}
+\label{tab:calibration}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Regime} & \textbf{AUROC} & \textbf{ECE} & \textbf{Conf.} & \textbf{Silent} \\
+\midrule
+filtered  & 0.900 & 0.066 & 0.703 & \textbf{48.0\%} \\
+full\_sub & 0.921 & 0.030 & 0.600 & 30.3\% \\
+full      & 0.923 & 0.030 & 0.603 & 29.8\% \\
+soft      & 0.905 & 0.085 & 0.469 & \textbf{12.9\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:calibration} gives the result. Training on the filtered record
+makes the model assert more than 90\% confidence on 48.0\% of the labels
+reviewers split on, against 30.3\% when the ambiguous middle is retained at
+matched sample size. Sample size therefore explains none of the gap; composition
+explains all of it.
+
+There is no accuracy argument for the filtering. AUROC is \emph{lower} for the
+filtered model (0.900 against 0.921), and its calibration error is twice as
+large. The filter costs calibration and buys nothing measurable.
+
+The effect is not specific to one learner. Repeating the matched comparison with
+a random forest and with logistic regression gives gaps of $+21.9$ and $+30.4$
+percentage points respectively, against $+17.9$ for gradient boosting, and the
+filtered model has lower AUROC in all three.
+
+Moving from hard to soft targets reduces silent assertions further, to 12.9\%.
+We report this but weight it less: that model is a regressor, so part of the
+reduction is mechanical rather than learned. The comparison we rely on is
+\emph{filtered} against \emph{full\_sub}, where both models are classifiers
+trained on equal amounts of data.
+
+\section{Discussion}
+
+\textbf{Route, do not delete.} The two kinds of disagreement have different
+remedies. Labels where reviewers were unsure describe a deficit of evidence:
+better imagery, a different capture angle, or a site visit could settle them.
+Labels where reviewers split describe a deficit of shared standards, and no
+amount of additional review will converge them---as Section~\ref{sec:resolve}
+shows empirically. Those belong in front of a person with the authority to
+decide what the city's threshold is. A pipeline that discards both treats a
+policy question as a data-quality problem.
+
+\textbf{Contested labels are a municipal asset.} A city that knows which of its
+accessibility judgements are contested knows where its standards are unclear.
+That is actionable information, and it is currently being deleted before anyone
+can read it. Preserving it costs nothing: the review records already exist.
+
+\textbf{Cleaning has spatial consequences.} Because contestation clusters,
+uniform filtering produces non-uniform coverage. Any audit of a crowdsourced
+accessibility map should report retention by neighbourhood alongside coverage,
+since a map can be complete in collection and incomplete after cleaning.
+
+\textbf{Aggregation, not filtering, is the deeper issue.} Our filtered-versus-%
+matched comparison isolates the cost of \emph{deleting} contested labels, and
+our soft-target comparison suggests a second cost of the same order from
+\emph{collapsing} the retained ones to hard labels. Even a pipeline that deleted
+nothing would discard the agreement margin, presenting a 20--1 label and a 6--4
+label as equally certain.
+
+\section{Limitations}
+
+Our downstream model predicts label validity from metadata rather than from
+imagery, so it is a proxy for the computer-vision models the platform actually
+trains \cite{li2024labelaid}. Whether the calibration effect transfers at the
+same magnitude to an image model is untested and is the clearest next step.
+
+The overconfidence result is an application of a known effect---hard labels
+produce overconfident models---to a deployed pipeline. Its contribution is the
+audit and the magnitudes, not a new claim about learning.
+
+Contested labels have near-arbitrary majority verdicts by construction: for a
+17--16 split, the target is close to a coin flip. Confidence on such labels is
+therefore confidence about a noisy target. We regard that as the point rather
+than a confound, since the model has no access to the review counts, but a
+reader may weigh it differently.
+
+Our sequence analysis rests on review position reflecting arrival order.
+Section~\ref{sec:resolve} gives three empirical tests supporting this, but we
+have not confirmed with the platform maintainers that the ordering is
+specifically chronological rather than database insertion order, though the two
+normally coincide.
+
+Finally, the additive variance model is a simplification; a crossed
+random-effects logistic fit would be the stricter treatment.
+
+\section{Conclusion}
+
+Quality control in crowdsourced urban accessibility data removes disagreement
+rather than error. Over 90\% of the labels reviewers contested are discarded in
+every one of twelve cities, the removal falls unevenly across neighbourhoods,
+and models trained on what survives become confident about precisely the cases
+people could not agree on---at no gain in accuracy. The disagreement being
+deleted is not noise about the sidewalk; it is a record of where a city's
+accessibility standards are unsettled. It should be routed to the people who can
+settle them, not filtered away before anyone sees it.
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\end{document}
