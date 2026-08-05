@@ -42,22 +42,34 @@ We separate the two by fitting an additive model
 $y_{ij} \sim \mu + a_i + b_j$ over individual review decisions, where $a_i$ is a
 label effect and $b_j$ a reviewer effect, estimated by alternating means and
 shrunk toward zero in proportion to the number of reviews supporting each label.
-The variance decomposition reverses between the two outcomes
-(Table~\ref{tab:variance}): disagreement is predominantly a property of the
-label, whereas uncertainty is predominantly a property of the reviewer.
+
+The model must be fitted \emph{within} each city. Deployments differ in both
+their reviewer populations and their base rates, so a pooled fit absorbs
+between-city variation into the reviewer term and materially overstates it: the
+pooled estimate attributes 20.8\% of the variance in ``not sure'' responses to
+reviewers against 14.3\% to labels, whereas the within-city estimates reverse
+that ordering in ten of twelve deployments.
+
+Fitted correctly, both outcomes are label-driven, and they differ in degree
+rather than in kind (Table~\ref{tab:variance}). Disagreement is overwhelmingly
+a property of the label, exceeding the reviewer term by a factor of roughly
+five. Uncertainty is only weakly so: reviewer identity accounts for about twice
+as much of the variance in ``not sure'' as it does in disagreement, and the
+label for about half as much.
 
 \begin{table}[tb]\centering
 \caption{Variance in individual review decisions attributable to the label
-versus the reviewer. Splitting into camps is largely about the sidewalk;
-answering ``not sure'' is largely about the person.}
+versus the reviewer, estimated within each city (median across twelve
+deployments). Disagreement is label-dominated in 12/12 cities; uncertainty in
+10/12.}
 \label{tab:variance}
 \begin{tabular}{lcc}
 \hline
 \textbf{Source} & \textbf{Disagree} & \textbf{Unsure} \\
 \hline
-Label     & \textbf{31.2\%} & 14.3\% \\
-Reviewer  & 9.5\%  & \textbf{20.8\%} \\
-Residual  & 59.3\% & 64.9\% \\
+Label     & \textbf{52.0\%} & 27.1\% \\
+Reviewer  & 9.7\%  & 20.7\% \\
+label:reviewer & \textbf{5.3:1} & 1.3:1 \\
 \hline
 \end{tabular}
 \end{table}
@@ -113,11 +125,21 @@ completely, the subset of the record in which human judgement about
 accessibility diverged. What survives into the analysable dataset is the portion
 on which agreement was never in question.
 
+This is not an artefact of any one deployment. Contested labels are retained at
+a lower rate than the city average in all twelve cities, and leaving any single
+city out moves the pooled figures by at most 1.3 percentage points---the largest
+shift, to 9.9\% and 7.5\%, comes from excluding Seattle, which alone
+contributes 30\% of the reviewed corpus. Bootstrap intervals over labels are
+narrow: 8.6\% [8.3, 9.0] for split labels and 6.8\% [6.2, 7.3] for unsure ones,
+against 54.5\% [54.2, 54.7] overall.
+
 % ---------------------------------------------------------------------------
 % TODO before submission
 %   - regenerate all numbers; the city deployments are live
-%   - per-city breakdown, to show the pattern is not driven by one deployment
-%   - bootstrap CIs on the QC retention rates
+%   - DONE per-city breakdown (sidewalk/by_city.py); QC finding holds 12/12
+%   - DONE bootstrap CIs on the QC retention rates
+%   - the within-label resolution test is still pooled across cities; repeat it
+%     per city, since pooling already misled us once on the variance split
 %   - verify that vote_index is chronological with the maintainers; the
 %     within-label test assumes it, and the only current support is that
 %     prolific reviewers appear at lower indices (rho = -0.16)
