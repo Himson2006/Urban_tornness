@@ -124,11 +124,11 @@ def main():
     # record to the filtered set's size, keeping the ambiguous middle.
     rng = np.random.default_rng(0)
     preds = {k: np.full(len(d), np.nan)
-             for k in ("filtered", "full_sub", "full", "soft")}
+             for k in ("filtered", "full_sub", "full", "soft_clf", "soft")}
     for tr, te in gkf.split(X, y, groups):
         n_keep = int(keep[tr].sum())
         sub_idx = rng.choice(tr, size=min(n_keep, len(tr)), replace=False)
-        for name in ("filtered", "full_sub", "full", "soft"):
+        for name in ("filtered", "full_sub", "full", "soft_clf", "soft"):
             if name == "filtered":
                 sub = tr[keep[tr]]
                 if len(np.unique(y[sub])) < 2:
@@ -143,6 +143,21 @@ def main():
             elif name == "full":
                 m = HistGradientBoostingClassifier(max_iter=200, random_state=0)
                 m.fit(X.iloc[tr], y[tr])
+                preds[name][te] = m.predict_proba(X.iloc[te])[:, 1]
+            elif name == "soft_clf":
+                # Genuine soft-label training for a classifier: each label
+                # enters twice, as a positive weighted by its agreement rate
+                # and a negative weighted by the remainder. That is exactly
+                # cross-entropy against the empirical review distribution, and
+                # it keeps the comparison with the other classifiers honest --
+                # the regressor below is naturally less extreme for reasons
+                # that have nothing to do with learning.
+                Xd = pd.concat([X.iloc[tr], X.iloc[tr]], ignore_index=True)
+                yd = np.r_[np.ones(len(tr), int), np.zeros(len(tr), int)]
+                wd = np.r_[soft[tr], 1.0 - soft[tr]]
+                ok = wd > 1e-6
+                m = HistGradientBoostingClassifier(max_iter=200, random_state=0)
+                m.fit(Xd[ok], yd[ok], sample_weight=wd[ok])
                 preds[name][te] = m.predict_proba(X.iloc[te])[:, 1]
             else:
                 m = HistGradientBoostingRegressor(max_iter=200, random_state=0)
@@ -168,8 +183,9 @@ def main():
 
     res = pd.DataFrame(rows)
     res.to_csv(a.data / "calibration.csv", index=False)
-    f, s = res.set_index("regime").loc["filtered"], res.set_index("regime").loc["soft"]
-    print(f"\n  filtered vs soft on contested labels: "
+    R = res.set_index("regime")
+    f, s = R.loc["filtered"], R.loc["soft_clf"]
+    print(f"\n  filtered vs soft_clf (both classifiers) on contested labels: "
           f"confidence {f.conf_contested:.3f} vs {s.conf_contested:.3f}, "
           f"p>0.9 rate {f.silent:.1%} vs {s.silent:.1%}")
     if f.silent > s.silent:
