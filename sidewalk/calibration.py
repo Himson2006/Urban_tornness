@@ -183,6 +183,9 @@ def main():
 
     res = pd.DataFrame(rows)
     res.to_csv(a.data / "calibration.csv", index=False)
+    # per-label predictions on contested labels, for the figure
+    pd.DataFrame({k: v[contested] for k, v in preds.items()}).to_parquet(
+        a.data / "contested_preds.parquet", index=False)
     R = res.set_index("regime")
     f, s = R.loc["filtered"], R.loc["soft_clf"]
     print(f"\n  filtered vs soft_clf (both classifiers) on contested labels: "
