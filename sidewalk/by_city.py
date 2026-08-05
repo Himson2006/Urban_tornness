@@ -56,6 +56,77 @@ def variance_split(v: pd.DataFrame, outcome: str, iters: int = 25):
     return a[li].var() / tot, b[ri].var() / tot
 
 
+def rev_effects(v: pd.DataFrame, outcome: str, iters: int = 25):
+    """Reviewer effects fitted WITHIN one city."""
+    d = v if outcome == "Unsure" else v[v.vote != "Unsure"]
+    y = (d.vote == outcome).to_numpy(float)
+    lc, rc = d.label_id.astype("category"), d.validator_id.astype("category")
+    li, ri = lc.cat.codes.to_numpy(), rc.cat.codes.to_numpy()
+    nl, nr = len(lc.cat.categories), len(rc.cat.categories)
+    mu, a, b = y.mean(), np.zeros(nl), np.zeros(nr)
+    ln = np.bincount(li, minlength=nl).astype(float)
+    rn = np.bincount(ri, minlength=nr).astype(float)
+    for _ in range(iters):
+        a = np.bincount(li, y - mu - b[ri], minlength=nl) / np.maximum(ln, 1)
+        b = np.bincount(ri, y - mu - a[li], minlength=nr) / np.maximum(rn, 1)
+        b -= b.mean()
+    return pd.Series(b, index=rc.cat.categories)
+
+
+def resolution_by_city(v: pd.DataFrame, min_reviews: int = 6) -> None:
+    """Within-label early-vs-late, per city, reviewer-adjusted.
+
+    The pooled version of this test is what the paper reports, and pooling has
+    already misled us once on the variance split. If the direction is not
+    consistent across deployments, the pooled delta is an average over
+    disagreeing cities and should not be stated as a general finding.
+    """
+    from scipy import stats
+    print("\n=== resolution test, per city (reviewer-adjusted) ===")
+    print("    delta = later reviews minus first three, same labels\n")
+    print(f"  {'city':11s} {'labels':>7} {'unsure d':>9} {'p':>9} "
+          f"{'disagree d':>11} {'p':>9}")
+    rows = []
+    for c, g in v.groupby("city"):
+        mx = g.groupby("label_id").vote_index.max()
+        s = g[g.label_id.isin(mx[mx >= min_reviews - 1].index)]
+        if s.label_id.nunique() < 100:
+            continue
+        rec = {"city": c, "n_labels": s.label_id.nunique()}
+        for outcome in ("Unsure", "Disagree"):
+            sub = s if outcome == "Unsure" else s[s.vote != "Unsure"]
+            if len(sub) < 300:
+                rec[outcome] = rec[outcome + "_p"] = np.nan
+                continue
+            b = sub.validator_id.map(rev_effects(g, outcome)).fillna(0.0)
+            y = (sub.vote == outcome).astype(float) - b
+            t = pd.DataFrame({"l": sub.label_id.values,
+                              "late": (sub.vote_index >= 3).values,
+                              "y": y.values})
+            w = t.groupby(["l", "late"]).y.mean().unstack().dropna()
+            if len(w) < 100:
+                rec[outcome] = rec[outcome + "_p"] = np.nan
+                continue
+            d_ = w[True].mean() - w[False].mean()
+            pv = stats.wilcoxon(w[False], w[True]).pvalue if (w[False] != w[True]).any() else np.nan
+            rec[outcome], rec[outcome + "_p"] = d_, pv
+        rows.append(rec)
+        print(f"  {c:11s} {rec['n_labels']:7,} {rec.get('Unsure', np.nan):+9.3f} "
+              f"{rec.get('Unsure_p', np.nan):9.1e} "
+              f"{rec.get('Disagree', np.nan):+11.3f} "
+              f"{rec.get('Disagree_p', np.nan):9.1e}")
+    r = pd.DataFrame(rows)
+    if len(r):
+        for oc in ("Unsure", "Disagree"):
+            col = r[oc].dropna()
+            pos = (col > 0).sum()
+            print(f"\n  {oc}: delta positive (worsens) in {pos}/{len(col)} cities"
+                  f"  |  median {col.median():+.3f}")
+        print("\n  A finding is only general if the sign is consistent; where it")
+        print("  is not, the pooled delta averages over cities that disagree.")
+    return r
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", type=Path, default=ROOT / "sidewalk/data")
@@ -132,6 +203,10 @@ def main():
     print("  identity matters about twice as much for 'not sure' as for")
     print("  disagreement, and the label matters about half as much.")
     r2.to_csv(a.data / "variance_by_city.csv", index=False)
+
+    r3 = resolution_by_city(v)
+    if r3 is not None and len(r3):
+        r3.to_csv(a.data / "resolution_by_city.csv", index=False)
 
     bc.to_csv(a.data / "by_city.csv", index=False)
     print(f"\nwrote {a.data/'by_city.csv'}")

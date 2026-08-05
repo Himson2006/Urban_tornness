@@ -83,34 +83,47 @@ tendency substantially reorders the population.
 Because the review records preserve each reviewer's identity and position in the
 sequence, we can compare a label's first three reviews against its later ones
 \emph{within the same label}, which removes any selection effect arising from
-which labels attract additional review. Restricting to the 21{,}042 labels with
-at least six reviews, the naive comparison suggests that uncertainty declines
-over a label's lifetime while disagreement grows.
+which labels attract additional review. We restrict to labels with at least six
+reviews and subtract each reviewer's estimated tendency, fitted within their own
+city, before comparing.
 
-That first impression is wrong, and instructively so. Early reviewers are
-themselves more unsure-prone than later ones (mean reviewer effect $+0.043$
-versus $+0.020$). Subtracting each reviewer's estimated tendency before
-comparing reverses the uncertainty result while leaving the disagreement result
-intact (Table~\ref{tab:resolve}). Neither form of disagreement resolves with
-additional review; both worsen slightly. Effect sizes are small against base
-rates of 0.08 and 0.31, but the direction is unambiguous at this sample size.
+The result is a null, and it is the point. Neither form of disagreement declines
+over a label's lifetime. Uncertainty rises slightly and consistently: the
+adjusted delta is positive in eight of eleven deployments with sufficient data,
+with a median of $+0.008$. Disagreement shows no consistent direction at all,
+positive in three of eleven and with a median of $-0.005$
+(Table~\ref{tab:resolve}).
+
+Two analyses that we report but do not rely on illustrate why this had to be
+done carefully. Without adjusting for reviewer tendency, uncertainty appears to
+\emph{decline} over a label's lifetime ($0.106 \rightarrow 0.096$); that
+apparent resolution is entirely explained by early reviewers being more
+unsure-prone than later ones (mean reviewer effect $+0.043$ versus $+0.020$).
+And when reviewer effects are estimated by pooling across deployments rather
+than within them, disagreement appears to rise sharply ($+0.026$); that
+disappears once each city's reviewers are modelled separately. Pooled estimates
+in this corpus absorb between-city differences into the reviewer term, and both
+of these artefacts point the same way---toward a tidier story than the data
+supports.
 
 \begin{table}[tb]\centering
 \caption{Within-label comparison of a label's first three reviews against its
-later ones ($n=21{,}042$ labels). Adjusting for reviewer tendency reverses the
-apparent resolution of uncertainty.}
+later ones, reviewer-adjusted within city. Delta is later minus early; positive
+means the label became \emph{more} contested. Neither outcome declines.}
 \label{tab:resolve}
-\begin{tabular}{llccc}
+\begin{tabular}{lccc}
 \hline
-\textbf{Outcome} & \textbf{Adjusted} & \textbf{Early} & \textbf{Later} & \textbf{$\Delta$} \\
+\textbf{Outcome} & \textbf{Median $\Delta$} & \textbf{Positive in} & \textbf{Cities} \\
 \hline
-Unsure   & no  & 0.106 & 0.096 & $-0.009$ \\
-Unsure   & yes & 0.082 & 0.090 & $+0.008$ \\
-Disagree & no  & 0.308 & 0.337 & $+0.030$ \\
-Disagree & yes & 0.313 & 0.340 & $+0.026$ \\
+Unsure   & $+0.008$ & 8/11 & consistent \\
+Disagree & $-0.005$ & 3/11 & no direction \\
 \hline
 \end{tabular}
 \end{table}
+
+The practical reading is narrow but sufficient for our argument: additional
+review does not resolve these labels. Whatever the disagreement is, it is not
+the kind of thing that more eyes settle.
 
 \subsection{Quality Control Removes the Contested Cases}
 
@@ -138,8 +151,8 @@ against 54.5\% [54.2, 54.7] overall.
 %   - regenerate all numbers; the city deployments are live
 %   - DONE per-city breakdown (sidewalk/by_city.py); QC finding holds 12/12
 %   - DONE bootstrap CIs on the QC retention rates
-%   - the within-label resolution test is still pooled across cities; repeat it
-%     per city, since pooling already misled us once on the variance split
+%   - DONE resolution test per city; the pooled 'disagreement worsens' result
+%     did not replicate (3/11 cities) and has been removed from the claim
 %   - verify that vote_index is chronological with the maintainers; the
 %     within-label test assumes it, and the only current support is that
 %     prolific reviewers appear at lower indices (rho = -0.16)
