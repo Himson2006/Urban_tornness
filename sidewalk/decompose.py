@@ -86,12 +86,14 @@ def analyse(v: pd.DataFrame, outcome: str, mask: np.ndarray | None = None):
           f"(sd {b.std():.3f})")
 
     a_s = shrink(a, lab_n, rv)
-    return pd.DataFrame({
+    eff = pd.DataFrame({
         "label_id": lcat.cat.categories,
         f"{outcome.lower()}_raw": mu + a,
         f"{outcome.lower()}_adj": mu + a_s,
         f"{outcome.lower()}_n": lab_n,
     })
+    rev_eff = pd.Series(b, index=rcat.cat.categories, name="rev_effect")
+    return eff, rev_eff
 
 
 def order_check(v: pd.DataFrame) -> None:
@@ -116,8 +118,30 @@ def order_check(v: pd.DataFrame) -> None:
     print("  the same labels appear in both groups -- compare within-label next")
 
 
-def within_label(v: pd.DataFrame, min_reviews: int = 6) -> None:
-    """The resolvability test, done within each label rather than across them."""
+def composition_check(v: pd.DataFrame, rev_eff: pd.Series, outcome: str) -> None:
+    """Do later reviews simply come from more critical reviewers?
+
+    If the reviewer pool shifts with arrival order, an apparent rise in
+    disagreement over a label's lifetime could be about who showed up rather
+    than about the label. This quantifies that directly.
+    """
+    e = v.validator_id.map(rev_eff)
+    early, late = v.vote_index < 3, v.vote_index >= 3
+    print(f"\n=== reviewer composition by arrival, {outcome} ===")
+    print(f"  mean reviewer effect, first 3 reviews : {e[early].mean():+.4f}")
+    print(f"  mean reviewer effect, later reviews   : {e[late].mean():+.4f}")
+    print(f"  difference                            : "
+          f"{e[late].mean()-e[early].mean():+.4f}")
+    print("  (positive => later reviewers are inherently more likely to give")
+    print(f"   '{outcome}', which would inflate any within-label trend)")
+
+
+def within_label(v: pd.DataFrame, rev_eff: dict, min_reviews: int = 6) -> None:
+    """The resolvability test, done within each label rather than across them.
+
+    Run twice: on the raw votes, and after subtracting each reviewer's
+    estimated tendency. If the trend survives adjustment it is about the label.
+    """
     g = v.groupby("label_id").vote_index.max()
     keep = g[g >= min_reviews - 1].index
     s = v[v.label_id.isin(keep)]
@@ -125,25 +149,29 @@ def within_label(v: pd.DataFrame, min_reviews: int = 6) -> None:
         print(f"\n(only {s.label_id.nunique()} labels with >={min_reviews} "
               f"reviews; skipping within-label test)")
         return
-    early = s[s.vote_index < 3].groupby("label_id").vote.apply(
-        lambda x: (x == "Unsure").mean())
-    late = s[s.vote_index >= 3].groupby("label_id").vote.apply(
-        lambda x: (x == "Unsure").mean())
-    e_d = s[s.vote_index < 3].groupby("label_id").vote.apply(
-        lambda x: (x == "Disagree").mean())
-    l_d = s[s.vote_index >= 3].groupby("label_id").vote.apply(
-        lambda x: (x == "Disagree").mean())
     from scipy import stats
-    j = pd.DataFrame({"e": early, "l": late}).dropna()
-    jd = pd.DataFrame({"e": e_d, "l": l_d}).dropna()
-    print(f"\n=== within-label: first 3 reviews vs later ({len(j):,} labels) ===")
-    for name, t in (("unsure", j), ("disagree", jd)):
-        w = stats.wilcoxon(t.e, t.l) if (t.e != t.l).any() else None
-        print(f"  {name:9s} early {t.e.mean():.3f} -> later {t.l.mean():.3f}"
-              f"  (delta {t.l.mean()-t.e.mean():+.3f}"
-              f"{f', p={w.pvalue:.1e}' if w else ''})")
-    print("  same labels on both sides, so this is not a selection effect --")
-    print("  it is the actual test of whether reviewing resolves anything")
+    print(f"\n=== within-label: first 3 reviews vs later "
+          f"({s.label_id.nunique():,} labels) ===")
+    print(f"  {'outcome':10s} {'adj':>4} {'early':>7} {'later':>7} "
+          f"{'delta':>8} {'p':>10}")
+    for outcome in ("Unsure", "Disagree"):
+        sub = s if outcome == "Unsure" else s[s.vote != "Unsure"]
+        y = (sub.vote == outcome).astype(float)
+        b = sub.validator_id.map(rev_eff[outcome]).fillna(0.0)
+        for tag, val in (("no", y), ("yes", y - b)):
+            t = pd.DataFrame({"label_id": sub.label_id.values,
+                              "late": (sub.vote_index >= 3).values,
+                              "y": val.values})
+            g = t.groupby(["label_id", "late"]).y.mean().unstack()
+            g = g.dropna()
+            if len(g) < 200:
+                continue
+            w = stats.wilcoxon(g[False], g[True]) if (g[False] != g[True]).any() else None
+            print(f"  {outcome:10s} {tag:>4} {g[False].mean():7.3f} "
+                  f"{g[True].mean():7.3f} {g[True].mean()-g[False].mean():+8.3f} "
+                  f"{w.pvalue if w else float('nan'):10.1e}")
+    print("  'adj=yes' subtracts each reviewer's estimated tendency first.")
+    print("  A trend that survives adjustment is about the label, not the crowd.")
 
 
 def main():
@@ -154,16 +182,19 @@ def main():
     v = pd.read_parquet(a.data / "validations.parquet")
     print(f"{len(v):,} individual reviews")
 
-    uns = analyse(v, "Unsure")
+    uns, uns_rev = analyse(v, "Unsure")
     took = (v.vote != "Unsure").to_numpy()
-    dis = analyse(v, "Disagree", took)
+    dis, dis_rev = analyse(v, "Disagree", took)
+    rev_eff = {"Unsure": uns_rev, "Disagree": dis_rev}
 
     out = uns.merge(dis, on="label_id", how="outer")
     dest = a.data / "label_effects.parquet"
     out.to_parquet(dest, index=False)
 
     order_check(v)
-    within_label(v)
+    for oc, re_ in rev_eff.items():
+        composition_check(v if oc == "Unsure" else v[v.vote != "Unsure"], re_, oc)
+    within_label(v, rev_eff)
 
     lab = pd.read_parquet(a.data / "labels.parquet")
     m = lab.merge(out, on="label_id", how="inner")
