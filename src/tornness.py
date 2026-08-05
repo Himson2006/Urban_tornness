@@ -112,6 +112,10 @@ def main():
                     help="0 disables the MC-dropout baseline")
     ap.add_argument("--include-tail", action="store_true", default=True,
                     help="also score frames past critical_point (resolvability)")
+    ap.add_argument("--n-frames", type=int, default=1,
+                    help=">1 loads a stacked multi-frame clip (motion model)")
+    ap.add_argument("--gap", type=int, default=5,
+                    help="frames between stacked crops when --n-frames > 1")
     ap.add_argument("--crop-scale", type=float, default=2.0,
                     help="effective crop as a multiple of the bbox; "
                          "stored crops are 2.0. Lower values center-crop "
@@ -122,7 +126,8 @@ def main():
     import os
     os.environ["CUDA_VISIBLE_DEVICES"] = a.gpu
 
-    df = load_store(crops=a.crops, manifest=a.manifest)
+    store = load_store(crops=a.crops, manifest=a.manifest)
+    df = store
     if not a.include_tail:
         df = df[df.in_exp_window]
 
@@ -143,11 +148,20 @@ def main():
     proto_class = ppnet.prototype_class_identity.argmax(1).cuda()  # (n_proto,)
     print(f"prototypes per class: {torch.bincount(proto_class).tolist()}")
 
-    _t = crop_transform(a.crop_scale)
-    tf = T.Compose(([_t] if _t else []) +
-                   [T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor(),
-                    T.Normalize(mean=mean, std=std)])
-    ds = PIECropDataset(df, a.crops, tf)
+    if a.n_frames > 1:
+        # multi-frame clip; history is looked up over the FULL crop store so
+        # frames outside the scored subset are still reachable
+        from pie_motion import PIESeqDataset, build_lookup
+        ds = PIESeqDataset(df, a.crops, build_lookup(store), a.n_frames, a.gap,
+                           IMG_SIZE, a.crop_scale, train=False)
+        print(f"motion input: {a.n_frames} frames, gap {a.gap} "
+              f"({3*a.n_frames} channels)")
+    else:
+        _t = crop_transform(a.crop_scale)
+        tf = T.Compose(([_t] if _t else []) +
+                       [T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor(),
+                        T.Normalize(mean=mean, std=std)])
+        ds = PIECropDataset(df, a.crops, tf)
     loader = torch.utils.data.DataLoader(
         ds, batch_size=a.batch, shuffle=False,
         num_workers=a.workers, pin_memory=True,
