@@ -1,0 +1,121 @@
+% Introduction and framing draft -- Project Sidewalk disagreement study.
+% Pairs with results_draft.tex. Numbers there are verified against the data;
+% the citation keys below still need entries in the .bib.
+
+\title{Two Kinds of Disagreement: What Quality Control Removes from
+Crowdsourced Urban Accessibility Data}
+
+\begin{abstract}
+Cities increasingly rely on crowdsourced assessments of the built environment to
+decide where to spend accessibility budgets. Those assessments are cleaned
+before use, and cleaning treats reviewer disagreement as noise. We show that it
+is not one thing. Across 811{,}368 labels from twelve Project Sidewalk
+deployments, reviewers fail to agree in two distinct ways: they split into
+opposing camps about whether a condition meets the threshold, or they
+individually decline to judge because they cannot tell from the image. The two
+are only weakly related, and they draw on different sources---disagreement is a
+property of the sidewalk by a factor of five over the reviewer, whereas
+uncertainty is barely so. Neither resolves with additional review. Yet the
+platform's published quality criterion retains 54.5\% of reviewed labels overall
+while retaining only 8.6\% of split labels and 6.8\% of uncertain ones,
+discarding over 90\% of both in all twelve cities. The record of where human
+judgement about accessibility diverges is being removed before anyone can read
+it. We argue that contested labels should be routed rather than deleted, and
+that the two kinds require different destinations: better imagery for one, a
+policy decision for the other.
+\end{abstract}
+
+\section{Introduction}
+
+Whether a stretch of pavement is passable in a wheelchair is not always a
+question with an answer. A cracked slab is a hazard to one person and an
+inconvenience to another; whether a corner \emph{needs} a curb ramp depends on
+what counts as a pedestrian route. These are judgement calls, and cities now
+make them at scale by asking volunteers.
+
+Project Sidewalk~\parencite{saha2019projectsidewalk} is among the largest such
+efforts: volunteers examine street-level imagery and mark accessibility
+problems---missing curb ramps, surface defects, obstructions---and other
+volunteers then review each mark as \emph{agree}, \emph{disagree}, or
+\emph{not sure}. The resulting labels feed accessibility audits, route planning
+for wheelchair users, and municipal remediation priorities. Before any of that,
+the data is cleaned: labels that failed to attract sufficient agreement are
+filtered out~\parencite{li2024labelaid}.
+
+That filtering step embeds an assumption worth examining. It treats a label that
+reviewers argued about as defective---as though disagreement indicates a
+mistake by the original labeller, to be discarded like a mis-click. But
+disagreement among careful reviewers can also indicate that the underlying
+question is genuinely contested, which is a different thing entirely and carries
+different consequences. If reviewers split over whether a particular crack rises
+to the level of a ``surface problem,'' that split is evidence about where a
+city's threshold actually sits, and about how much its accessibility standards
+are shared. Deleting it does not resolve the ambiguity; it conceals it.
+
+We further argue that disagreement is not one phenomenon. A reviewer can fail to
+endorse a label in two ways that look similar in aggregate and mean opposite
+things. Reviewers can \emph{split}: some confidently agree, others confidently
+disagree, and the disagreement is about where the standard lies. Or reviewers can
+be \emph{unsure}: nobody takes a position, because the image does not settle the
+question. The first is a disagreement about values, and more reviewing will not
+converge it. The second is a disagreement about evidence, which better imagery
+could in principle fix. A pipeline that cannot tell them apart cannot route
+either one correctly.
+
+Project Sidewalk is unusual in making this separable at all. Most crowdsourcing
+interfaces offer only agreement or disagreement; the explicit ``not sure''
+option, recorded per reviewer alongside reviewer identity and position in the
+review sequence, is what makes the decomposition possible.
+
+Our contributions are three:
+
+\begin{itemize}
+\setlength\itemsep{0.1em}
+\item An \textbf{empirical decomposition of reviewer disagreement} into a
+  standards component and an evidence component, applied to 746{,}975
+  individual review decisions across twelve city deployments. The two are only
+  weakly related ($\rho = 0.14$) and differ sharply in source: splitting is a
+  property of the label rather than the reviewer by roughly five to one, whereas
+  for uncertainty the ratio is close to parity (Section~\ref{sec:results}).
+\item Evidence that \textbf{neither kind resolves with additional review}.
+  Comparing a label's first three reviews against its later ones, within the
+  same label and adjusted for who reviewed it, neither form of disagreement
+  declines. Whatever is producing these splits, more eyes do not settle it.
+\item A \textbf{measurement of what quality control removes}. The published
+  filter retains over half of all reviewed labels but under a tenth of the
+  contested ones, in every one of the twelve cities. We give the resulting
+  design implication: contested labels are a signal a city needs, and should be
+  routed by kind rather than filtered by consensus.
+\end{itemize}
+
+A methodological point runs alongside these. Each of the findings above changed
+sign or magnitude when we controlled properly for who reviewed a label and for
+which city it came from. Reviewer ``not sure'' rates range from 0\% to 70\%,
+and deployments differ enough that estimates pooled across them absorb
+between-city variation into reviewer effects. We report the uncontrolled
+analyses beside the controlled ones, because in each case the uncontrolled
+version told a tidier story than the data supports, and because anyone repeating
+this work on similar data will meet the same trap.
+
+% ---------------------------------------------------------------------------
+% Framing notes (not for the submitted text)
+%
+% What this paper is NOT claiming:
+%   - not that Project Sidewalk's filter is badly designed. It does what it was
+%     built to do, which is remove low-quality labels. The claim is about what
+%     else goes with them, and that no separate channel preserves it.
+%   - not that contested labels are correct. They are contested; correctness is
+%     the wrong frame, which is the point.
+%   - not that "unsure" is purely an image-quality signal. Within cities it is
+%     label-driven, but only 1.3:1, so it is substantially about the reviewer.
+%
+% Related work to position against:
+%   - Aroyo & Welty, "Truth is a Lie" -- disagreement as signal, not noise.
+%     Closest predecessor; we add the two-kind decomposition and a policy setting.
+%   - Gordon et al., jury learning -- who should decide when annotators disagree.
+%   - Project Sidewalk / LabelAId -- the platform and its quality pipeline.
+%   - accessibility data & municipal decision-making -- for the stakes.
+%
+% Venue: HCOMP or CSCW fit the crowdsourcing contribution; an urban computing
+% venue works if the accessibility-policy framing leads.
+% ---------------------------------------------------------------------------
