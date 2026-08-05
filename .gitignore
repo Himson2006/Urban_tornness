@@ -30,3 +30,4 @@ saved_models/
 data/
 ProtoPNet/pretrained_models/
 runs/
+sidewalk/data/
