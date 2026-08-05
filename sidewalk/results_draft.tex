@@ -1,0 +1,126 @@
+% Results section draft -- Project Sidewalk disagreement study.
+% Every number here is produced by sidewalk/manifest.py and sidewalk/decompose.py
+% over 12 city instances. Regenerate before submission; the platforms are live
+% and the counts drift.
+
+\section{Results}
+\label{sec:results}
+
+Our corpus is every label from the twelve live Project Sidewalk city
+deployments: 811{,}368 labels in total, of which 177{,}599 carry at least three
+independent reviews. Those reviewed labels rest on 746{,}975 individual review
+decisions contributed by 11{,}480 reviewers.
+
+\subsection{Two Kinds of Disagreement}
+
+We decompose each label's review record into two quantities. \emph{Split}
+measures how evenly the reviewers who took a position divided between agree and
+disagree; \emph{unsure} measures the share who declined to take one. A label can
+score high on either, both, or neither.
+
+Both populations are substantial: reviewers split into opposing camps on
+23{,}638 labels (13.3\%) and answered ``not sure'' at a rate of one third or
+more on 7{,}299 (4.1\%). The two are only weakly related
+($\rho = 0.14$), which is the first evidence that they are distinct phenomena
+rather than two readings of a single underlying difficulty.
+
+Disagreement is not distributed uniformly across the label taxonomy. Missing
+curb ramps draw the highest rate of split reviews, consistent with a judgement
+about whether a ramp \emph{ought} to exist rather than about what is visible.
+Obstacles draw the highest rate of ``not sure'' responses. Split reviews also
+rise monotonically with the severity rating assigned by the original labeller,
+which is what a disagreement about where a threshold sits would predict.
+
+\subsection{Where the Disagreement Lives}
+
+Reviewers are not interchangeable. Among the 3{,}333 reviewers with at least
+twenty reviews, ``not sure'' rates range from 0\% to 70.0\% with a median of
+3.0\%. A raw count of unsure votes on a label therefore confounds a property of
+the sidewalk with a property of whoever happened to review it.
+
+We separate the two by fitting an additive model
+$y_{ij} \sim \mu + a_i + b_j$ over individual review decisions, where $a_i$ is a
+label effect and $b_j$ a reviewer effect, estimated by alternating means and
+shrunk toward zero in proportion to the number of reviews supporting each label.
+The variance decomposition reverses between the two outcomes
+(Table~\ref{tab:variance}): disagreement is predominantly a property of the
+label, whereas uncertainty is predominantly a property of the reviewer.
+
+\begin{table}[tb]\centering
+\caption{Variance in individual review decisions attributable to the label
+versus the reviewer. Splitting into camps is largely about the sidewalk;
+answering ``not sure'' is largely about the person.}
+\label{tab:variance}
+\begin{tabular}{lcc}
+\hline
+\textbf{Source} & \textbf{Disagree} & \textbf{Unsure} \\
+\hline
+Label     & \textbf{31.2\%} & 14.3\% \\
+Reviewer  & 9.5\%  & \textbf{20.8\%} \\
+Residual  & 59.3\% & 64.9\% \\
+\hline
+\end{tabular}
+\end{table}
+
+The practical consequence is that raw and reviewer-adjusted estimates of which
+labels are ``unclear'' correlate at only $\rho = 0.68$: removing reviewer
+tendency substantially reorders the population.
+
+\subsection{More Review Does Not Produce Consensus}
+
+Because the review records preserve each reviewer's identity and position in the
+sequence, we can compare a label's first three reviews against its later ones
+\emph{within the same label}, which removes any selection effect arising from
+which labels attract additional review. Restricting to the 21{,}042 labels with
+at least six reviews, the naive comparison suggests that uncertainty declines
+over a label's lifetime while disagreement grows.
+
+That first impression is wrong, and instructively so. Early reviewers are
+themselves more unsure-prone than later ones (mean reviewer effect $+0.043$
+versus $+0.020$). Subtracting each reviewer's estimated tendency before
+comparing reverses the uncertainty result while leaving the disagreement result
+intact (Table~\ref{tab:resolve}). Neither form of disagreement resolves with
+additional review; both worsen slightly. Effect sizes are small against base
+rates of 0.08 and 0.31, but the direction is unambiguous at this sample size.
+
+\begin{table}[tb]\centering
+\caption{Within-label comparison of a label's first three reviews against its
+later ones ($n=21{,}042$ labels). Adjusting for reviewer tendency reverses the
+apparent resolution of uncertainty.}
+\label{tab:resolve}
+\begin{tabular}{llccc}
+\hline
+\textbf{Outcome} & \textbf{Adjusted} & \textbf{Early} & \textbf{Later} & \textbf{$\Delta$} \\
+\hline
+Unsure   & no  & 0.106 & 0.096 & $-0.009$ \\
+Unsure   & yes & 0.082 & 0.090 & $+0.008$ \\
+Disagree & no  & 0.308 & 0.337 & $+0.030$ \\
+Disagree & yes & 0.313 & 0.340 & $+0.026$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Quality Control Removes the Contested Cases}
+
+Project Sidewalk's published quality criterion retains a label when it has more
+than two agreements and no more than two disagreements. Applied to our corpus it
+retains 54.5\% of reviewed labels overall. Applied to the contested populations
+it retains 8.6\% of split labels and 6.8\% of unsure ones---discarding 91\% and
+93\% respectively.
+
+The filter is therefore not removing noise uniformly. It is removing, almost
+completely, the subset of the record in which human judgement about
+accessibility diverged. What survives into the analysable dataset is the portion
+on which agreement was never in question.
+
+% ---------------------------------------------------------------------------
+% TODO before submission
+%   - regenerate all numbers; the city deployments are live
+%   - per-city breakdown, to show the pattern is not driven by one deployment
+%   - bootstrap CIs on the QC retention rates
+%   - verify that vote_index is chronological with the maintainers; the
+%     within-label test assumes it, and the only current support is that
+%     prolific reviewers appear at lower indices (rho = -0.16)
+%   - state the additive-model assumption explicitly; a crossed random-effects
+%     logistic fit is the stricter version if a reviewer objects
+% ---------------------------------------------------------------------------
