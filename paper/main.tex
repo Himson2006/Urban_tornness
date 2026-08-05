@@ -637,6 +637,20 @@ our soft-target comparison suggests a second cost of the same order from
 nothing would discard the agreement margin, presenting a 20--1 label and a 6--4
 label as equally certain.
 
+This second cost is not specific to Project Sidewalk, and an example from
+another urban dataset makes the point without a filtering step anywhere in
+sight. The PIE pedestrian intention dataset~\cite{rasouli2019pie} publishes
+\texttt{intention\_prob}, the mean judgement of roughly fifteen observers asked
+whether a pedestrian intends to cross, and standard practice thresholds it into
+a binary training target. Among the 1{,}374 pedestrians labelled as intending
+to cross, \texttt{intention\_prob} ranges from 0.15 to 1.00. The 107
+pedestrians on whom observers divided roughly evenly contribute 1{,}815
+training frames, each weighted as a certain positive alongside the 13{,}128
+frames drawn from pedestrians the observers agreed about. Nothing is discarded
+here; the margin is simply not carried forward. Wherever a graded human
+judgement is thresholded before training---which is most places---the same
+information is lost.
+
 \section{Threats to Validity}
 
 \textbf{Pooling.} Our strongest methodological caution concerns the corpus
