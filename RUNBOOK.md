@@ -253,3 +253,99 @@ similarity and MC-dropout tensor shapes on CPU.
 Not yet verified: decoding real PIE MP4s (B-frames or variable frame rate could
 behave differently from the synthetic test — this is exactly why set05 goes
 first, and why you should look at the contact sheet), and any CUDA path.
+
+---
+
+# xBD: competing prototypes over pre/post change
+
+A separate study from the PIE work above, sharing its discipline but not its
+data. The question is *when does competing-prototype explanation work, and where
+is ambiguity concentrated in disaster damage assessment?*
+
+## Why the input is a pair
+
+Buildings in xBD have a median footprint of 26 pixels; only 15% reach 40. On
+appearance alone that is thinner evidence than the pedestrian crops that already
+failed. But the pre- and post-disaster images are co-registered, so the same
+pixel polygon addresses the same building in both, and the model can be given
+the pair. The explanation's object stops being *what does this roof look like*
+and becomes *what changed here* — and change survives low resolution far better
+than texture.
+
+The stem conv is inflated from 3 to 6 channels with the pretrained kernel
+halved, so a building that did not change reproduces the pretrained single-image
+response exactly (verified to 7e-6). "No change" is the origin of the feature
+space rather than an arbitrary point in it.
+
+## The population (all 3,732 label files, verified)
+
+| | |
+|---|---|
+| buildings | 217,649 across 10 disasters |
+| ordinal middle (minor + major) | 37,789 (17.4%) |
+| middle at >= 24 px | 22,771 — 10,433 minor / 12,338 major |
+| scenes holding them | 1,283 (~4.2 GB of imagery) |
+| control task (no-damage vs destroyed, >= 24 px) | 93,818 |
+
+Ambiguity is not spread evenly across events, and the pattern is not noise:
+hurricanes carry it (Matthew 61.6% middle, Harvey 46.0%, Michael 31.3%) while
+fire, earthquake and tsunami barely do (Santa Rosa 1.0% middle but 25.8%
+destroyed; Mexico earthquake 0.6%). Wind and water damage buildings by degrees;
+fire and ground failure tend not to. That is a finding, not a nuisance.
+
+**Two confounds to keep in view.** Major-damage footprints are larger than minor
+(32 vs 25 px median) and destroyed are smallest (20 px) — rubble is traced
+smaller. So building size carries label information directly, and every
+association below is reported partialled on size, off-nadir, GSD and sun
+elevation. Second, one event (Harvey) is half the contested set, which is why
+`--group disaster` exists.
+
+## Steps
+
+```bash
+# 1. labels only, ~200 MB -- decides go/no-go before any imagery is pulled
+python xbd/fetch_labels.py
+python xbd/manifest.py
+
+# 2. paired crops. Visits only scenes holding contested buildings; every
+#    building in a visited scene is extracted, so the control task is free.
+#    ~75 min on a home connection, resumable, ~4 GB.
+python -u xbd/extract_crops.py --min-side 24 2>&1 | tee xbd/extract.log
+
+# 3. LOOK AT THE CROPS before training on them. Rows are buildings, columns
+#    are pre / post / |difference|. If major-damage pairs are indistinguishable,
+#    the premise is wrong and no training run will rescue it.
+python xbd/contact_sheet.py --per-class 8
+
+# 4. train (GPU). Checkpoint on val, test scored once.
+python xbd/train.py --fold 0                      # contested boundary, paired
+python xbd/train.py --fold 0 --no-paired          # ablation: is the pair load-bearing?
+python xbd/train.py --fold 0 --task extremes      # control: easy boundary
+python xbd/train.py --fold 0 --group disaster     # held-out event
+
+# 5. tornness, with the confound checks in front
+python xbd/tornness.py --run xbd/runs/middle_pair_scene_f0_resnet34
+```
+
+Set `HF_TOKEN` before step 2 if you have one — unauthenticated fetches hit 429
+throttling and the download takes several times longer.
+
+## What would kill this study
+
+In the order the analysis checks them:
+
+1. **Saturation.** If `max_sim` takes a handful of distinct values, co-activation
+   has no variance and every statistic built on it is noise. This is precisely
+   how the pedestrian experiment failed, undetected, for weeks. `xbd/tornness.py`
+   refuses to interpret anything until this passes.
+2. **Degradation.** If co-activation survives raw but dies once partialled on
+   size and viewing geometry, the measure is a resolution detector.
+3. **The control task.** Co-activation on no-damage vs destroyed should be
+   markedly lower than on minor vs major. If it is not, it is not tracking
+   ambiguity.
+4. **The ablation.** If `--no-paired` matches `--paired`, the change signal
+   bought nothing and the study's distinguishing claim is gone.
+
+Any of these coming out badly is publishable as a negative result, in the way the
+LIDC arm of the HICSS paper was — but only if it is reported, not discovered
+later.

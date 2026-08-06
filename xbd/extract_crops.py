@@ -62,6 +62,11 @@ def main():
                     help="skip buildings smaller than this, in pixels")
     ap.add_argument("--limit", type=int, default=0, help="0 = all scenes")
     ap.add_argument("--disaster", default="", help="restrict to one disaster")
+    ap.add_argument("--scenes-with", default="minor-damage,major-damage",
+                    help="only visit scenes containing these classes; every "
+                         "building in a visited scene is still extracted, so "
+                         "the control task comes free with the same imagery. "
+                         "Empty string visits every scene.")
     ap.add_argument("--seed", type=int, default=0,
                     help="scene sample is deterministic given --limit")
     a = ap.parse_args()
@@ -82,6 +87,12 @@ def main():
     # We need per-building pixel polygons, which the manifest summarises rather
     # than stores; re-read them from the label files as we go.
     scenes = d[["split", "scene"]].drop_duplicates()
+    if a.scenes_with:
+        want = [c.strip() for c in a.scenes_with.split(",")]
+        keep = set(d.loc[d.damage.isin(want), "scene"])
+        scenes = scenes[scenes.scene.isin(keep)]
+        print(f"  {len(scenes):,} scenes contain {want} at >= "
+              f"{a.min_side:.0f} px", flush=True)
     if a.limit and len(scenes) > a.limit:
         # sample rather than take a prefix: scenes are ordered by disaster, so a
         # prefix is one disaster's worth of buildings, not a cross-section
