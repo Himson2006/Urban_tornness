@@ -24,8 +24,8 @@
 
 \begin{document}
 
-\title{What Quality Control Removes: Contested Labels in Crowdsourced
-Urban Accessibility Data}
+\title{Cleaning Removes Disagreement, Not Error: Consensus Filtering in
+Crowdsourced Urban Data}
 
 \author{Himson Chapagain}
 \affiliation{%
@@ -36,10 +36,12 @@ Urban Accessibility Data}
 \email{rnx16@txstate.edu}
 
 \begin{abstract}
-Cities increasingly rely on crowdsourced assessments of the built environment to
-decide where to spend accessibility budgets. Those assessments are cleaned
-before use, and cleaning treats reviewer disagreement as noise. Across
-811{,}368 labels from twelve Project Sidewalk deployments, we show that the
+Crowdsourced assessments of the built environment increasingly inform municipal
+decisions, and nearly all of them pass through a consensus filter before use: a
+contribution is retained if enough reviewers agree and dropped otherwise. Such
+filters treat reviewer disagreement as noise. We audit one instance where the
+per-reviewer record is public---811{,}368 labels from twelve Project Sidewalk
+deployments---and show that the
 platform's published quality criterion retains 54.5\% of reviewed labels overall
 but only 8.6\% of labels reviewers split on and 6.8\% of labels they were
 unsure about, discarding over 90\% of both in all twelve cities. The removal is
@@ -52,9 +54,12 @@ size, with no gain in discriminative accuracy. The effect replicates across
 three model families. The remedy is free: training against the review
 distribution the platform already stores, rather than a hard majority verdict,
 cuts those assertions to 14.4\% while slightly \emph{improving} accuracy. We
-argue that contested labels should be routed rather than deleted, and that the
-two kinds of disagreement require different destinations---better imagery for
-one, a policy decision for the other.
+argue that contested contributions should be routed rather than deleted, and
+that the two kinds of disagreement require different destinations---better
+evidence for one, a policy decision for the other. The conditions under which a
+pipeline is exposed to these effects---a consensus threshold, hard-label
+aggregation, and spatially clustered contestation---are common, and we
+characterise them so the audit can be repeated elsewhere.
 \end{abstract}
 
 \begin{CCSXML}
@@ -70,21 +75,39 @@ one, a policy decision for the other.
 \ccsdesc[500]{Human-centered computing~Collaborative and social computing systems and tools}
 \ccsdesc[300]{Information systems~Data mining}
 
-\keywords{crowdsourcing, data quality, urban accessibility, annotator
-disagreement, model calibration, volunteered geographic information}
+\keywords{crowdsourcing, data quality, consensus filtering, civic data,
+annotator disagreement, model calibration, volunteered geographic information,
+urban accessibility}
 
 \maketitle
 
 \section{Introduction}
 
-Whether a stretch of pavement is passable in a wheelchair is not always a
-question with an answer. A cracked slab is a hazard to one person and an
-inconvenience to another; whether a corner \emph{needs} a curb ramp depends on
-what counts as a pedestrian route. These are judgement calls, and cities now
-make them at scale by asking volunteers.
+Cities increasingly describe their physical infrastructure using data produced
+by volunteers: which corners lack curb ramps, which pavements are broken, which
+crossings are obstructed. Because volunteer contributions vary in quality, these
+systems almost universally apply a \emph{consensus filter}---a contribution is
+shown to several reviewers and retained only if enough of them agree. The rule
+is simple, defensible, and near-ubiquitous.
 
-Project Sidewalk~\cite{saha2019projectsidewalk} is among the largest such
-efforts. Volunteers examine street-level imagery and mark accessibility
+It also assumes something that is often false: that when reviewers fail to
+agree, someone was wrong. Many of the judgements these systems collect have no
+determinate answer. Whether a stretch of pavement is passable in a wheelchair
+depends on the wheelchair and the user; a cracked slab is a hazard to one person
+and an inconvenience to another; whether a corner \emph{needs} a curb ramp
+depends on what counts as a pedestrian route. When reviewers divide over such a
+case, the division is not an error to be filtered but a measurement of where a
+standard is unsettled.
+
+This paper audits what a consensus filter actually removes. We study Project
+Sidewalk~\cite{saha2019projectsidewalk} because it is, to our knowledge, the
+largest civic crowdsourcing system that publishes its review records
+individually rather than as aggregates---which is what makes the audit possible
+at all. The pattern we examine, however, is a property of the filter design
+rather than of this platform, and we return in Section~\ref{sec:susceptible} to
+the conditions under which other systems are exposed to the same effects.
+
+Project Sidewalk is among the largest such efforts. Volunteers examine street-level imagery and mark accessibility
 problems---missing curb ramps, surface defects, obstructions---and other
 volunteers review each mark as \emph{agree}, \emph{disagree}, or
 \emph{not sure}. The resulting labels feed accessibility audits, routing for
@@ -426,8 +449,15 @@ separately. Both artefacts point toward a tidier story than the data supports.
 \section{Quality Control Removes the Contested Cases}
 \label{sec:qc}
 
-Project Sidewalk's published quality criterion retains a label when it has more
-than two agreements and no more than two disagreements. Applied to our corpus it
+A consensus filter is defined by a retention rule over the review tally. In its
+general form it keeps a contribution when agreements exceed some threshold
+$\tau_a$ and disagreements fall below some $\tau_d$, and drops it otherwise;
+the abstentions, where the interface offers them, are typically ignored. Project
+Sidewalk instantiates this with $\tau_a = 2$ and $\tau_d = 2$: it retains a
+label when it has more than two agreements and no more than two disagreements.
+Nothing in what follows depends on those particular values---Figure~\ref{fig:cliff}
+shows the behaviour across the whole disagreement range---but they fix the
+numbers we report. Applied to our corpus it
 retains 54.5\% of reviewed labels overall (95\% CI [54.2, 54.7]). Applied to the
 contested populations it retains 8.6\% of split labels ([8.3, 9.0]) and 6.8\% of
 unsure ones ([6.2, 7.3])---discarding 91\% and 93\% respectively.
@@ -490,7 +520,8 @@ burnaby     &  1,319 &  5.6\% &  3.5\% & 66.4\% &  1.4\% &  2.2\% &  3 & 63\%--7
 Contested labels are not distributed uniformly across a city, so the filter
 removes evidence unevenly. Across 284 neighbourhood regions with at least 100
 reviewed labels, between-region variation in retention exceeds binomial
-sampling noise by a factor of 3.3 to 7.6 in every city. Seattle spans 11\% to
+sampling noise by a factor of 3.3 to 7.6 in every city
+(Figure~\ref{fig:spatial}; per-city figures in Table~\ref{tab:cities}). Seattle spans 11\% to
 71\% retention across its 83 regions; Chicago spans 20\% to 83\% across 78.
 
 The obvious explanation---that regions differ in what gets labelled there, and
@@ -543,7 +574,8 @@ soft      & 0.907 & 0.084 & 0.484 & \textbf{14.4\%} \\
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:calibration} gives the result. Training on the filtered record
+Table~\ref{tab:calibration} gives the result, and Figure~\ref{fig:calib} shows
+where the two regimes place their probability mass. Training on the filtered record
 makes the model assert more than 90\% confidence on 48.0\% of the labels
 reviewers split on, against 30.3\% when the ambiguous middle is retained at
 matched sample size. Sample size therefore explains none of the gap; composition
@@ -593,6 +625,7 @@ A regressor trained on the agreement rate directly reaches 12.9\%, confirming
 that the reduction is not an artefact of how soft targets are encoded.
 
 \section{Discussion}
+\label{sec:discussion}
 
 \textbf{Route, do not delete.} The two kinds of disagreement have different
 remedies. Labels where reviewers were unsure describe a deficit of evidence:
@@ -651,6 +684,48 @@ here; the margin is simply not carried forward. Wherever a graded human
 judgement is thresholded before training---which is most places---the same
 information is lost.
 
+\section{Which Pipelines Are Exposed}
+\label{sec:susceptible}
+
+Our measurements come from a single platform, and we do not claim to have
+observed these effects elsewhere. What we can do is state the conditions under
+which they arise, since each follows from a design choice rather than from
+anything particular to sidewalks.
+
+\textbf{A consensus threshold produces the deletion.} Any rule of the form
+``retain if agreements exceed $\tau_a$ and disagreements fall below $\tau_d$''
+removes contributions in proportion to how contested they are, by construction.
+The magnitude depends on the thresholds and on how contested the domain is, but
+the direction does not. Systems that instead retain everything and record the
+tally are unaffected.
+
+\textbf{Hard-label aggregation produces the calibration cost.} This does not
+require a filter at all. Any pipeline that writes a verdict rather than a tally
+discards the margin, and the PIE example in Section~\ref{sec:discussion} shows
+the loss occurring in a dataset with no filtering step. Since thresholding a
+graded human judgement before training is close to universal practice, this
+condition is met almost everywhere.
+
+\textbf{Spatially clustered contestation produces the coverage bias.} Deletion
+alone is not enough; the removed contributions must be geographically
+non-random. That will hold wherever the contested categories concentrate in
+particular built environments---older housing stock, informal pavements,
+commercial frontages with obstructions---which is to say wherever the physical
+city is heterogeneous.
+
+\textbf{The audit needs per-reviewer records.} This is the binding constraint on
+replication rather than on the phenomenon. A platform storing only counts can
+still measure deletion and the calibration cost, but not the reviewer-versus-item
+decomposition of Section~\ref{sec:where} or the within-item sequence test of
+Section~\ref{sec:resolve}. A platform storing only post-filter data cannot
+measure any of it, which is the usual case and the reason such audits are rare.
+
+We would expect the deletion and calibration results to appear in other
+consensus-filtered civic datasets---street condition reporting, damage
+assessment after disasters, land-use verification---and the spatial result to
+appear wherever the contested categories are unevenly distributed. Confirming
+that requires the operators of those systems to publish their review records.
+
 \section{Threats to Validity}
 
 \textbf{Pooling.} Our strongest methodological caution concerns the corpus
@@ -683,6 +758,16 @@ at a particular cut.
 
 \section{Limitations}
 
+All of our measurements come from one platform. We have framed the mechanism
+generally and characterised the conditions for exposure in
+Section~\ref{sec:susceptible}, but the magnitudes we report---91\% and 93\%
+deletion, the three- to eight-fold spatial spread, the 48\% against 30\%
+confidence gap---are properties of Project Sidewalk's thresholds, its reviewer
+population, and its label taxonomy. They should be read as an existence proof
+and an order of magnitude, not as constants. Whether other consensus-filtered
+civic datasets exhibit similar magnitudes is an open question, and answering it
+depends on operators publishing per-reviewer records.
+
 Our downstream model predicts label validity from metadata rather than from
 imagery, so it is a proxy for the computer-vision models the platform actually
 trains \cite{li2024labelaid}. Whether the calibration effect transfers at the
@@ -709,14 +794,20 @@ random-effects logistic fit would be the stricter treatment.
 
 \section{Conclusion}
 
-Quality control in crowdsourced urban accessibility data removes disagreement
-rather than error. Over 90\% of the labels reviewers contested are discarded in
+Consensus filtering removes disagreement rather than error. In the system we
+audit, over 90\% of the contributions reviewers contested are discarded in
 every one of twelve cities, the removal falls unevenly across neighbourhoods,
 and models trained on what survives become confident about precisely the cases
 people could not agree on---at no gain in accuracy. The disagreement being
 deleted is not noise about the sidewalk; it is a record of where a city's
-accessibility standards are unsettled. It should be routed to the people who can
-settle them, not filtered away before anyone sees it.
+standards are unsettled. It should be routed to the people who can settle them,
+not filtered away before anyone sees it.
+
+We audited the one civic platform whose review records are public. The design
+choices that produce these effects---a consensus threshold, a hard-label write,
+a contested category that clusters geographically---are not unusual, and any
+system sharing them is exposed in the same way. Whether it is exposed to the
+same degree is something only its operators can currently determine.
 
 The remedy costs less than the problem. Retaining a contested label with its
 review counts intact, rather than recording it as correct or deleting it, is a
