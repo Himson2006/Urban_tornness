@@ -145,6 +145,29 @@ def seed_all(s: int):
     torch.cuda.manual_seed_all(s)
 
 
+def scores(P: np.ndarray, Y: np.ndarray, n_cls: int) -> dict:
+    """Accuracy alone is misleading when a class holds 74% of the split.
+
+    Michael is 74% minor and Harvey 74% major, so a model that has learned
+    nothing can post a high accuracy, and one trained under balanced sampling
+    can post a low one while discriminating perfectly well. Balanced accuracy
+    and AUC say whether the classes are separable at all, independent of where
+    the threshold happens to sit.
+    """
+    from sklearn.metrics import balanced_accuracy_score, roc_auc_score
+
+    pred = P.argmax(1)
+    out = {"acc": float((pred == Y).mean()),
+           "balanced_acc": float(balanced_accuracy_score(Y, pred)),
+           "majority": float(max(np.bincount(Y, minlength=n_cls)) / len(Y))}
+    try:
+        out["auc"] = float(roc_auc_score(Y, P[:, 1]) if n_cls == 2
+                           else roc_auc_score(Y, P, multi_class="ovr"))
+    except ValueError:      # a split with one class present
+        out["auc"] = float("nan")
+    return out
+
+
 def evaluate(ppnet, loader, dev) -> tuple[float, np.ndarray, np.ndarray]:
     ppnet.eval()
     P, Y = [], []
@@ -171,8 +194,18 @@ def main():
     ap.add_argument("--fold", type=int, default=0)
     ap.add_argument("--min-side", type=float, default=24.0)
     ap.add_argument("--img-size", type=int, default=224)
-    ap.add_argument("--crop-px", type=int, default=96,
-                    help="native crop is read at this size, then resized")
+    # This defaulted to 96 while --img-size said 224, and --img-size only feeds
+    # construct_PPNet's bookkeeping: the tensor the network actually saw was
+    # 96x96, giving a 3x3 prototype grid instead of 7x7. Nine reachable
+    # positions makes "on the building" collapse to "in the centre cell". 0
+    # means follow --img-size, which is what anyone reading these flags expects.
+    ap.add_argument("--crop-px", type=int, default=0,
+                    help="input size; 0 follows --img-size")
+    ap.add_argument("--disaster", default="",
+                    help="train and evaluate within one event. Pooled across "
+                         "events, class composition differs enough that a model "
+                         "scores well by learning which disaster it is looking "
+                         "at while discriminating nothing within any of them.")
     ap.add_argument("--arch", default="resnet34")
     ap.add_argument("--protos-per-class", type=int, default=10)
     ap.add_argument("--proto-dim", type=int, default=128)
@@ -210,11 +243,14 @@ def main():
     a = ap.parse_args()
 
     seed_all(a.seed)
+    if a.crop_px <= 0:
+        a.crop_px = a.img_size
     classes = TASKS[a.task]
     n_cls = len(classes)
     n_blocks = 2 if a.paired else 1
+    dis_tag = f"_{a.disaster.replace('-', '')}" if a.disaster else ""
     tag = (f"{a.task}_{'pair' if a.paired else 'post'}"
-           f"{'' if a.align else '_raw'}_{a.group}_f{a.fold}_{a.arch}")
+           f"{'' if a.align else '_raw'}{dis_tag}_{a.group}_f{a.fold}_{a.arch}")
     run = a.out / tag
     run.mkdir(parents=True, exist_ok=True)
     if (run / "DONE").exists():
@@ -223,6 +259,11 @@ def main():
     log, logclose = create_logger(log_filename=str(run / "train.log"))
 
     m = load_meta(a.crops, a.task, a.min_side, a.buildings, a.radiometry)
+    if a.disaster:
+        m = m[m.disaster == a.disaster].reset_index(drop=True)
+        if len(m) < 500:
+            raise SystemExit(f"only {len(m)} crops for {a.disaster!r}; "
+                             f"too few to split five ways")
     m["fold"] = assign_folds(m, a.folds, a.group, a.seed)
     te = m[m.fold == a.fold]
     rest = m[m.fold != a.fold]
@@ -297,8 +338,18 @@ def main():
             "needs a GPU. Use --dry-run to validate data, model and a forward "
             "pass on CPU before shipping to the server.")
     ppnet_par = torch.nn.DataParallel(ppnet)
+    # Probe the real spatial grid rather than trusting --img-size. The gap
+    # between the two is what made the first wave train at 96x96 with a 3x3
+    # grid while every flag said 224.
+    with torch.no_grad():
+        probe = torch.zeros(1, 3 * n_blocks, a.crop_px, a.crop_px, device=dev)
+        _, pd_ = ppnet.push_forward(probe)
+        gh, gw = pd_.shape[-2:]
     log(f"{n_proto} prototypes ({a.protos_per_class}/class), dim {a.proto_dim}"
-        f" | input {3 * n_blocks} channels")
+        f" | input {3 * n_blocks}x{a.crop_px}x{a.crop_px}"
+        f" -> prototype grid {gh}x{gw} ({gh * gw} positions)")
+    if gh * gw < 16:
+        log(f"  WARNING: {gh}x{gw} is too coarse to localise within a building")
 
     stem = list(ppnet.features.conv1.parameters())
     stem_ids = {id(p) for p in stem}
@@ -398,9 +449,14 @@ def main():
     st = torch.load(run / "best.pth", map_location=dev, weights_only=False)
     ppnet.load_state_dict(st["model"])
     acc, P, Y = evaluate(ppnet, te_l, dev)
-    maj = float(max(np.bincount(Y, minlength=n_cls)) / len(Y))
-    log(f"\nFINAL  best epoch {st['epoch']}  val {st['val_acc']:.4f}  "
-        f"test {acc:.4f}  (majority {maj:.4f})")
+    sc = scores(P, Y, n_cls)
+    maj = sc["majority"]
+    log(f"\nFINAL  best epoch {st['epoch']}  val {st['val_acc']:.4f}")
+    log(f"  test acc {acc:.4f}  (majority {maj:.4f}, "
+        f"lift {acc - maj:+.4f})")
+    log(f"  balanced acc {sc['balanced_acc']:.4f}  (chance 0.5000)   "
+        f"AUC {sc['auc']:.4f}  (chance 0.5000)")
+    log("  AUC is the one to read when a class holds most of the split")
 
     # A pooled accuracy can hide a disaster with no signal in it. The raw
     # pre/post difference separates damage classes cleanly in Florence and
@@ -409,22 +465,38 @@ def main():
     # over events is how that disappears.
     by_dis = {}
     te_out = te.copy()
-    te_out["correct"] = (P.argmax(1) == Y)
-    log(f"\n  {'disaster':24s} {'n':>7} {'acc':>7} {'majority':>9}")
+    te_out["_i"] = np.arange(len(te_out))
+    log(f"\n  {'disaster':24s} {'n':>7} {'acc':>7} {'majority':>9} {'AUC':>7}")
     for dis, g in te_out.groupby("disaster"):
         if len(g) < 50:
             continue
-        gm = float(max(np.bincount(g.label, minlength=n_cls)) / len(g))
-        by_dis[str(dis)] = {"n": len(g), "acc": float(g.correct.mean()),
-                            "majority": gm}
-        log(f"  {str(dis)[:24]:24s} {len(g):7,} {g.correct.mean():7.4f} "
-            f"{gm:9.4f}")
+        gi = g._i.values
+        gs = scores(P[gi], Y[gi], n_cls)
+        by_dis[str(dis)] = {"n": len(g), **gs}
+        log(f"  {str(dis)[:24]:24s} {len(g):7,} {gs['acc']:7.4f} "
+            f"{gs['majority']:9.4f} {gs['auc']:7.4f}")
+    # the number the pooled figure hides: a model can beat the pooled majority
+    # while losing to every within-event majority, by learning which event it
+    # is looking at
+    if by_dis:
+        n_tot = sum(v["n"] for v in by_dis.values())
+        wmaj = sum(v["majority"] * v["n"] for v in by_dis.values()) / n_tot
+        wacc = sum(v["acc"] * v["n"] for v in by_dis.values()) / n_tot
+        log(f"\n  within-event weighted:  acc {wacc:.4f}  vs majority "
+            f"{wmaj:.4f}  ({wacc - wmaj:+.4f})")
+        log(f"  pooled:                 acc {acc:.4f}  vs majority "
+            f"{maj:.4f}  ({acc - maj:+.4f})")
+        if (acc - maj) > 0 and (wacc - wmaj) <= 0:
+            log("  -> the pooled lift is Simpson's paradox: skill on the")
+            log("     mixture, none within any event.")
     np.savez(run / "test_probs.npz", probs=P, y=Y,
              uid=te.uid.values.astype(str))
     (run / "final_test.json").write_text(json.dumps(
         {"tag": tag, "task": a.task, "paired": a.paired, "group": a.group,
          "fold": a.fold, "classes": classes, "best_epoch": st["epoch"],
          "val_acc": st["val_acc"], "test_acc": acc, "majority": maj,
+         "balanced_acc": sc["balanced_acc"], "auc": sc["auc"],
+         "disaster": a.disaster, "crop_px": a.crop_px,
          "n_train": len(tr), "n_val": len(va), "n_test": len(te),
          "align": a.align, "by_disaster": by_dis}, indent=2))
     (run / "DONE").touch()

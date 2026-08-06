@@ -18,11 +18,13 @@ from pathlib import Path
 runs = sorted(Path("xbd/runs").glob("*/final_test.json"))
 if not runs:
     raise SystemExit("no finished runs")
-print(f"{'run':40s} {'test':>7} {'major':>7} {'val':>7} {'n_test':>8}")
+print(f"{'run':44s} {'test':>7} {'major':>7} {'bal':>7} {'AUC':>7} {'n_test':>8}")
 for p in runs:
     d = json.loads(p.read_text())
-    print(f"{d['tag']:40s} {d['test_acc']:7.4f} {d['majority']:7.4f} "
-          f"{d['val_acc']:7.4f} {d['n_test']:8,}")
+    print(f"{d['tag']:44s} {d['test_acc']:7.4f} {d['majority']:7.4f} "
+          f"{d.get('balanced_acc', float('nan')):7.4f} "
+          f"{d.get('auc', float('nan')):7.4f} {d['n_test']:8,}")
+print("\nAUC is the number to read: accuracy against a 74% majority says little.")
 print()
 for p in runs:
     d = json.loads(p.read_text())
@@ -30,10 +32,18 @@ for p in runs:
     if not bd:
         continue
     print(f"--- {d['tag']} ---")
-    print(f"  {'disaster':24s} {'n':>7} {'acc':>7} {'majority':>9} {'lift':>7}")
+    print(f"  {'disaster':24s} {'n':>7} {'acc':>7} {'majority':>9} {'lift':>7} {'AUC':>7}")
     for k, v in sorted(bd.items(), key=lambda kv: -kv[1]["n"]):
         print(f"  {k[:24]:24s} {v['n']:7,} {v['acc']:7.4f} "
-              f"{v['majority']:9.4f} {v['acc']-v['majority']:+7.4f}")
+              f"{v['majority']:9.4f} {v['acc']-v['majority']:+7.4f} "
+              f"{v.get('auc', float('nan')):7.4f}")
+    n = sum(v["n"] for v in bd.values())
+    wm = sum(v["majority"] * v["n"] for v in bd.values()) / n
+    wa = sum(v["acc"] * v["n"] for v in bd.values()) / n
+    print(f"  {'WITHIN-EVENT weighted':24s} {n:7,} {wa:7.4f} {wm:9.4f} "
+          f"{wa-wm:+7.4f}")
+    print(f"  {'POOLED':24s} {d['n_test']:7,} {d['test_acc']:7.4f} "
+          f"{d['majority']:9.4f} {d['test_acc']-d['majority']:+7.4f}")
     print()
 PY
 
