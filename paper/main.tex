@@ -752,54 +752,70 @@ assessment after disasters, land-use verification---and the spatial result to
 appear wherever the contested categories are unevenly distributed. Confirming
 that requires the operators of those systems to publish their review records.
 
-\section{Threats to Validity and Limitations}
+\section{Threats to Validity}
 
 \textbf{Pooling.} Our strongest methodological caution concerns the corpus
 itself. Deployments differ in reviewer population, base rates, label
 composition and maturity, and estimates pooled across them absorb that
 variation into whichever term is most flexible. Three findings in this study
 changed sign or magnitude when refitted within cities, and in every case the
-pooled version was the more striking one. We report both throughout, and
+pooled version was the more striking one. We report both throughout, and we
 recommend that any reanalysis of multi-deployment crowdsourcing data begin by
 checking whether its effects survive being broken apart.
 
-\textbf{Reviewer composition and selection.} Early and late reviewers are not
-drawn from the same pool---early reviewers are measurably more unsure-prone---so
-any comparison across a label's history must adjust for reviewer identity or it
-will measure the crowd rather than the label. This is what reverses the naive
-uncertainty result in Section~\ref{sec:resolve}. Labels also do not receive
-additional review at random; we address that by comparing early against late
-reviews \emph{within} the same label, but cannot rule out that the platform's
-assignment policy correlates with label properties in ways that affect which
-labels reach six reviews at all. Our sequence analysis further rests on review
-position reflecting arrival order: Section~\ref{sec:resolve} gives three
-empirical tests supporting this, but we have not confirmed with the maintainers
-that the ordering is chronological rather than database insertion order, though
-the two normally coincide.
+\textbf{Reviewer composition over a label's lifetime.} Early and late reviewers
+are not drawn from the same pool---early reviewers are measurably more
+unsure-prone. Any comparison across a label's history must adjust for reviewer
+identity or it will measure the crowd rather than the label. This is what
+reverses the naive uncertainty result in Section~\ref{sec:resolve}.
 
-\textbf{One platform.} All of our measurements come from Project Sidewalk. We
-have framed the mechanism generally and characterised the conditions for
-exposure in Section~\ref{sec:susceptible}, but the magnitudes---91\% and 93\%
+\textbf{Selection into review.} Labels do not receive additional review at
+random. We address this by comparing early against late reviews \emph{within}
+the same label, so that the same population appears on both sides of the
+comparison, but we cannot rule out that the platform's review-assignment policy
+correlates with label properties in ways that affect which labels reach six
+reviews at all.
+
+\textbf{Choice of contested thresholds.} Our categorical definitions---split
+above $0.6$ with fewer than 20\% unsure, unsure at or above one third---are
+conventions. The continuous analyses in Figure~\ref{fig:cliff} do not depend on
+them, and the retention collapse is visible across the whole range rather than
+at a particular cut.
+
+\section{Limitations}
+
+All of our measurements come from one platform. We have framed the mechanism
+generally and characterised the conditions for exposure in
+Section~\ref{sec:susceptible}, but the magnitudes we report---91\% and 93\%
 deletion, the three- to eight-fold spatial spread, the 48\% against 30\%
-confidence gap---are properties of this platform's thresholds, reviewer
-population and label taxonomy. They are an existence proof and an order of
-magnitude, not constants. Our categorical definitions of contestation are
-likewise conventions; the continuous analysis in Figure~\ref{fig:cliff} does not
-depend on them.
+confidence gap---are properties of Project Sidewalk's thresholds, its reviewer
+population, and its label taxonomy. They should be read as an existence proof
+and an order of magnitude, not as constants. Whether other consensus-filtered
+civic datasets exhibit similar magnitudes is an open question, and answering it
+depends on operators publishing per-reviewer records.
 
-\textbf{A metadata proxy.} Our downstream model predicts label validity from
-metadata rather than imagery, so it stands in for the computer-vision models the
-platform actually trains \cite{li2024labelaid}. Whether the calibration effect
-transfers at the same magnitude to an image model is untested and is the
-clearest next step. The effect itself is an application of a known
-result---hard labels produce overconfident models---to a deployed pipeline; the
-contribution is the audit and the magnitudes, not a new claim about learning.
+Our downstream model predicts label validity from metadata rather than from
+imagery, so it is a proxy for the computer-vision models the platform actually
+trains \cite{li2024labelaid}. Whether the calibration effect transfers at the
+same magnitude to an image model is untested and is the clearest next step.
 
-\textbf{Noisy targets on contested labels.} For a 17--16 split the majority
-verdict is close to a coin flip, so confidence on such labels is confidence
-about a noisy target. We regard that as the point rather than a confound, since
-the model has no access to the review counts, but a reader may weigh it
-differently. Finally, the additive variance model is a simplification; a crossed
+The overconfidence result is an application of a known effect---hard labels
+produce overconfident models---to a deployed pipeline. Its contribution is the
+audit and the magnitudes, not a new claim about learning.
+
+Contested labels have near-arbitrary majority verdicts by construction: for a
+17--16 split, the target is close to a coin flip. Confidence on such labels is
+therefore confidence about a noisy target. We regard that as the point rather
+than a confound, since the model has no access to the review counts, but a
+reader may weigh it differently.
+
+Our sequence analysis rests on review position reflecting arrival order.
+Section~\ref{sec:resolve} gives three empirical tests supporting this, but we
+have not confirmed with the platform maintainers that the ordering is
+specifically chronological rather than database insertion order, though the two
+normally coincide.
+
+Finally, the additive variance model is a simplification; a crossed
 random-effects logistic fit would be the stricter treatment.
 
 \section{Conclusion}
