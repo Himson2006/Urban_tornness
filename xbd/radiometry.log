@@ -1,0 +1,21 @@
+resuming: 50 scenes done, 1,233 to go
+  (100/1233)
+  (200/1233)
+  (300/1233)
+  (400/1233)
+  (500/1233)
+  (600/1233)
+  (700/1233)
+  (800/1233)
+  (900/1233)
+  (1000/1233)
+  (1100/1233)
+  (1200/1233)
+
+1,283 scenes measured
+  post minus pre mean brightness: median -1.1, p10 -14.4, p90 +8.2  (0-255 scale)
+  post/pre contrast ratio:        median 0.97, p10 0.67, p90 1.31
+  a scene-constant shift of this size is visible to the model and
+  carries no information about any individual building
+
+wrote /Users/himsonchapagain/Documents/RAI Lab/Urban Project/xbd/data/scene_radiometry.parquet

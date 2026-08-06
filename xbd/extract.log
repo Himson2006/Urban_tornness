@@ -15,3 +15,56 @@ Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF
   (300/1283) socal-fire_00000930: 2 crops
   (325/1283) hurricane-florence_00000086: 3 crops
   (350/1283) hurricane-florence_00000188: 5 crops
+  (375/1283) hurricane-florence_00000341: 4 crops
+  (400/1283) hurricane-florence_00000419: 2 crops
+  (425/1283) hurricane-florence_00000462: 26 crops
+  (450/1283) hurricane-florence_00000514: 1 crops
+  (475/1283) hurricane-harvey_00000042: 7 crops
+  (500/1283) hurricane-harvey_00000109: 110 crops
+  (525/1283) hurricane-harvey_00000165: 3 crops
+  (550/1283) hurricane-harvey_00000266: 1 crops
+  (575/1283) hurricane-harvey_00000345: 2 crops
+  (600/1283) hurricane-harvey_00000422: 195 crops
+  (625/1283) hurricane-harvey_00000477: 199 crops
+  (650/1283) hurricane-harvey_00000519: 7 crops
+HTTP Error 504 thrown while requesting HEAD https://huggingface.co/datasets/aryananand/xBD/resolve/main/train/images/hurricane-matthew_00000045_post_disaster.png
+Retrying in 1s [Retry 1/5].
+HTTP Error 504 thrown while requesting HEAD https://huggingface.co/datasets/aryananand/xBD/resolve/main/train/images/hurricane-matthew_00000045_post_disaster.png
+Retrying in 2s [Retry 2/5].
+HTTP Error 504 thrown while requesting HEAD https://huggingface.co/datasets/aryananand/xBD/resolve/main/train/images/hurricane-matthew_00000045_post_disaster.png
+Retrying in 4s [Retry 3/5].
+  (675/1283) hurricane-matthew_00000062: 5 crops
+  (700/1283) hurricane-matthew_00000103: 27 crops
+  (725/1283) hurricane-matthew_00000256: 1 crops
+  (750/1283) hurricane-michael_00000000: 51 crops
+  (775/1283) hurricane-michael_00000048: 25 crops
+  (800/1283) hurricane-michael_00000096: 6 crops
+  (825/1283) hurricane-michael_00000143: 45 crops
+  (850/1283) hurricane-michael_00000183: 17 crops
+  (875/1283) hurricane-michael_00000224: 18 crops
+  (900/1283) hurricane-michael_00000265: 16 crops
+  (925/1283) hurricane-michael_00000301: 58 crops
+  (950/1283) hurricane-michael_00000338: 18 crops
+  (975/1283) hurricane-michael_00000387: 13 crops
+  (1000/1283) hurricane-michael_00000435: 27 crops
+  (1025/1283) hurricane-michael_00000479: 71 crops
+  (1050/1283) hurricane-michael_00000516: 64 crops
+  (1075/1283) mexico-earthquake_00000049: 94 crops
+  (1100/1283) midwest-flooding_00000030: 3 crops
+  (1125/1283) midwest-flooding_00000247: 10 crops
+  (1150/1283) midwest-flooding_00000405: 1 crops
+  (1175/1283) palu-tsunami_00000065: 47 crops
+  (1200/1283) palu-tsunami_00000167: 109 crops
+  (1225/1283) santa-rosa-wildfire_00000146: 8 crops
+  (1250/1283) santa-rosa-wildfire_00000373: 19 crops
+  (1275/1283) socal-fire_00001020: 45 crops
+
+58,716 paired crops from 1,283 scenes, 791 MB
+damage
+no-damage        31603
+major-damage     12338
+minor-damage     10433
+destroyed         3993
+un-classified      349
+
+wrote /Users/himsonchapagain/Documents/RAI Lab/Urban Project/xbd/data/crops/crop_meta.parquet

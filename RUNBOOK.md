@@ -300,30 +300,55 @@ association below is reported partialled on size, off-nadir, GSD and sun
 elevation. Second, one event (Harvey) is half the contested set, which is why
 `--group disaster` exists.
 
-## The radiometric confound, found by looking
+## What looking at the data changed
 
-The first contact sheet turned up something no accuracy number would have shown.
-The pre and post images of a scene come from different satellite passes, and the
-whole frame shifts in tone between them: on the scenes measured so far the post
-capture is 11 levels darker on a 0-255 scale and carries **35% less contrast**
-(median ratio 0.65). On the major-damage examples the pre crop was blue-cast and
-the post nearly white, across the entire crop including the grass.
+Two things turned up in the contact sheet that no accuracy number would have
+shown, and both were found before any GPU time was spent.
 
-Handed that, a six-channel model learns "the post image is brighter", and scores
-well, because capture conditions correlate with scene, scene with disaster, and
-disaster with damage. It is the same failure as the pedestrian prototypes
-landing on the curb — a real signal, and the wrong one.
+**Radiometric mismatch between captures.** The pre and post images of a scene
+come from different satellite passes, so the whole frame shifts in tone between
+them -- on some scenes the pre crop is blue-cast and the post nearly white,
+across the grass as well as the roof. Across all 1,283 scenes the median
+contrast ratio is 0.97, so this is not a global bias; but the spread is wide
+(p10 0.67, p90 1.31) and it is *scene-specific*, which is worse. A six-channel
+model can read it, and capture conditions correlate with scene, scene with
+disaster, and disaster with damage.
 
 `xbd/radiometry.py` estimates the shift from the whole 1024x1024 frame, where a
 single building cannot move the statistics, and stores a per-scene gain and
-offset. `dataset.py` applies it to the pre crop at load time. It is stored
-rather than baked in, so `--no-align` measures how much of the model's
-performance was the artifact.
+offset. It is stored rather than baked in, so the `raw` run measures exactly how
+much of any result was the satellite pass.
 
-After alignment, mean |pre − post| is still ordered along the damage scale —
-no-damage 16.8, minor 21.7, major 26.9 — which is the premise of the study
-holding up before any training. Treat that as provisional: it is 50 scenes of
-one hurricane so far.
+**The change signal is not there for every disaster.** Median |pre - post| after
+alignment, by damage class, within each event:
+
+| disaster | no | minor | major | destroyed |
+|---|---|---|---|---|
+| hurricane-florence | 20.1 | 22.9 | 26.8 | 31.4 |
+| hurricane-michael | 24.2 | 26.3 | 28.1 | 35.1 |
+| socal-fire | 20.8 | 23.8 | 34.5 | 30.9 |
+| palu-tsunami | 22.9 | -- | 26.7 | 29.1 |
+| **hurricane-harvey** | **20.8** | **20.1** | **20.1** | **20.8** |
+
+Harvey is flat: four classes, four identical numbers. It is a flood, and flood
+damage is inside the building rather than on the roof, so an overhead pair does
+not contain the evidence. Harvey is also roughly half the contested set.
+
+**Pooled across events the signal vanishes entirely** (no-damage 23.4, minor
+25.2, major 21.8, destroyed 30.7 -- major *below* no-damage), because events
+differ in both baseline capture difference and class composition. This is the
+third pooling artifact in this project, after the two in the Project Sidewalk
+work, and it points the same way every time: fit within the group, then pool.
+
+So every result is reported per disaster. `train.py` breaks test accuracy down by
+event, and a pooled number that looks fine while Harvey sits at its majority
+baseline is not a result.
+
+This is also the study's most interesting claim rather than a defect: competing-
+prototype explanation should work where damage is visible from above -- wind,
+fire, tsunami -- and fail where it is not. Ambiguity in flood assessment would
+then be irreducible from imagery, which is a statement about what a damage
+assessor should do, not about the model.
 
 ## Steps
 

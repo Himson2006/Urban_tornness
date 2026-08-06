@@ -401,13 +401,32 @@ def main():
     maj = float(max(np.bincount(Y, minlength=n_cls)) / len(Y))
     log(f"\nFINAL  best epoch {st['epoch']}  val {st['val_acc']:.4f}  "
         f"test {acc:.4f}  (majority {maj:.4f})")
+
+    # A pooled accuracy can hide a disaster with no signal in it. The raw
+    # pre/post difference separates damage classes cleanly in Florence and
+    # Michael and not at all in Harvey -- flood damage is inside the building,
+    # not on the roof -- and Harvey is roughly half the contested set. Pooling
+    # over events is how that disappears.
+    by_dis = {}
+    te_out = te.copy()
+    te_out["correct"] = (P.argmax(1) == Y)
+    log(f"\n  {'disaster':24s} {'n':>7} {'acc':>7} {'majority':>9}")
+    for dis, g in te_out.groupby("disaster"):
+        if len(g) < 50:
+            continue
+        gm = float(max(np.bincount(g.label, minlength=n_cls)) / len(g))
+        by_dis[str(dis)] = {"n": len(g), "acc": float(g.correct.mean()),
+                            "majority": gm}
+        log(f"  {str(dis)[:24]:24s} {len(g):7,} {g.correct.mean():7.4f} "
+            f"{gm:9.4f}")
     np.savez(run / "test_probs.npz", probs=P, y=Y,
              uid=te.uid.values.astype(str))
     (run / "final_test.json").write_text(json.dumps(
         {"tag": tag, "task": a.task, "paired": a.paired, "group": a.group,
          "fold": a.fold, "classes": classes, "best_epoch": st["epoch"],
          "val_acc": st["val_acc"], "test_acc": acc, "majority": maj,
-         "n_train": len(tr), "n_val": len(va), "n_test": len(te)}, indent=2))
+         "n_train": len(tr), "n_val": len(va), "n_test": len(te),
+         "align": a.align, "by_disaster": by_dis}, indent=2))
     (run / "DONE").touch()
     logclose()
 
