@@ -43,35 +43,68 @@ def list_label_files() -> list[str]:
                   if f.endswith(".json") and "post_disaster" in f)
 
 
-def fetch_one(rel: str, dest: Path) -> bool:
+def fetch_one(rel: str, dest: Path, tries: int = 5) -> bool:
+    """Fetch with backoff. The Hub returns 429 under naive parallel fetching."""
+    import random
+    import time
     out = dest / rel.replace("/", "__")
     if out.exists() and out.stat().st_size > 10:
         return True
-    try:
-        with urllib.request.urlopen(RAW + rel, timeout=60) as r:
-            out.write_bytes(r.read())
-        return True
-    except Exception:
-        return False
+    for k in range(tries):
+        try:
+            with urllib.request.urlopen(RAW + rel, timeout=60) as r:
+                out.write_bytes(r.read())
+            return True
+        except urllib.error.HTTPError as e:
+            if e.code != 429:
+                return False
+            time.sleep((2 ** k) + random.random())
+        except Exception:
+            time.sleep(1 + random.random())
+    return False
+
+
+def fetch_via_hub(dest: Path) -> int:
+    """Preferred path: snapshot_download handles throttling and resumption."""
+    from huggingface_hub import snapshot_download
+    local = snapshot_download(
+        repo_id=REPO, repo_type="dataset",
+        allow_patterns=["*/labels/*post_disaster.json"],
+        max_workers=4)
+    n = 0
+    for src in Path(local).rglob("*post_disaster.json"):
+        rel = src.relative_to(local).as_posix()
+        out = dest / rel.replace("/", "__")
+        if not out.exists():
+            out.write_bytes(src.read_bytes())
+        n += 1
+    return n
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=ROOT / "xbd/data/labels")
-    ap.add_argument("--workers", type=int, default=16)
+    ap.add_argument("--workers", type=int, default=4)
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
 
     files = list_label_files()
     print(f"{len(files):,} post-disaster label files in {REPO}")
 
-    with ThreadPoolExecutor(a.workers) as ex:
-        ok = list(ex.map(lambda f: fetch_one(f, a.out), files))
+    try:
+        n = fetch_via_hub(a.out)
+        print(f"  snapshot_download: {n:,} label files")
+    except Exception as e:
+        print(f"  snapshot_download unavailable ({type(e).__name__}); "
+              f"falling back to direct fetch with backoff")
+        with ThreadPoolExecutor(a.workers) as ex:
+            list(ex.map(lambda f: fetch_one(f, a.out), files))
+
     have = len(list(a.out.glob("*.json")))
-    print(f"  {sum(ok):,}/{len(files):,} fetched, {have:,} on disk "
+    print(f"  {have:,}/{len(files):,} on disk "
           f"({sum(p.stat().st_size for p in a.out.glob('*.json'))/1e6:.0f} MB)")
-    if sum(ok) < len(files):
-        print("  re-run to retry failures; existing files are reused")
+    if have < len(files):
+        print("  re-run to retry the remainder; existing files are reused")
 
 
 if __name__ == "__main__":
