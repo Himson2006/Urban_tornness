@@ -300,6 +300,31 @@ association below is reported partialled on size, off-nadir, GSD and sun
 elevation. Second, one event (Harvey) is half the contested set, which is why
 `--group disaster` exists.
 
+## The radiometric confound, found by looking
+
+The first contact sheet turned up something no accuracy number would have shown.
+The pre and post images of a scene come from different satellite passes, and the
+whole frame shifts in tone between them: on the scenes measured so far the post
+capture is 11 levels darker on a 0-255 scale and carries **35% less contrast**
+(median ratio 0.65). On the major-damage examples the pre crop was blue-cast and
+the post nearly white, across the entire crop including the grass.
+
+Handed that, a six-channel model learns "the post image is brighter", and scores
+well, because capture conditions correlate with scene, scene with disaster, and
+disaster with damage. It is the same failure as the pedestrian prototypes
+landing on the curb — a real signal, and the wrong one.
+
+`xbd/radiometry.py` estimates the shift from the whole 1024x1024 frame, where a
+single building cannot move the statistics, and stores a per-scene gain and
+offset. `dataset.py` applies it to the pre crop at load time. It is stored
+rather than baked in, so `--no-align` measures how much of the model's
+performance was the artifact.
+
+After alignment, mean |pre − post| is still ordered along the damage scale —
+no-damage 16.8, minor 21.7, major 26.9 — which is the premise of the study
+holding up before any training. Treat that as provisional: it is 50 scenes of
+one hurricane so far.
+
 ## Steps
 
 ```bash
@@ -309,21 +334,26 @@ python xbd/manifest.py
 
 # 2. paired crops. Visits only scenes holding contested buildings; every
 #    building in a visited scene is extracted, so the control task is free.
-#    ~75 min on a home connection, resumable, ~4 GB.
+#    ~2.5 h on a home connection, resumable, ~4 GB.
 python -u xbd/extract_crops.py --min-side 24 2>&1 | tee xbd/extract.log
 
-# 3. LOOK AT THE CROPS before training on them. Rows are buildings, columns
-#    are pre / post / |difference|. If major-damage pairs are indistinguishable,
-#    the premise is wrong and no training run will rescue it.
-python xbd/contact_sheet.py --per-class 8
+# 3. per-scene radiometric alignment (needs the imagery from step 2 cached)
+python xbd/radiometry.py
 
-# 4. train (GPU). Checkpoint on val, test scored once.
+# 4. LOOK AT THE CROPS before training on them. Rows are buildings, columns
+#    are pre / post / |difference|, with the difference at fixed gain so panels
+#    are comparable. If major-damage pairs are indistinguishable, the premise is
+#    wrong and no training run will rescue it.
+python xbd/contact_sheet.py --per-class 8
+python xbd/contact_sheet.py --per-class 8 --no-align --out xbd/data/sheet_raw.png
+
+# 5. train (GPU). Checkpoint on val, test scored once.
 python xbd/train.py --fold 0                      # contested boundary, paired
 python xbd/train.py --fold 0 --no-paired          # ablation: is the pair load-bearing?
 python xbd/train.py --fold 0 --task extremes      # control: easy boundary
 python xbd/train.py --fold 0 --group disaster     # held-out event
 
-# 5. tornness, with the confound checks in front
+# 6. tornness, with the confound checks in front
 python xbd/tornness.py --run xbd/runs/middle_pair_scene_f0_resnet34
 ```
 

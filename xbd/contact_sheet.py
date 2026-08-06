@@ -41,14 +41,29 @@ def main():
     ap.add_argument("--per-class", type=int, default=6)
     ap.add_argument("--min-side", type=float, default=24.0)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--align", action="store_true", default=True,
+                    help="apply the per-scene pre->post radiometric alignment")
+    ap.add_argument("--no-align", dest="align", action="store_false")
+    ap.add_argument("--radiometry", type=Path,
+                    default=ROOT / "xbd/data/scene_radiometry.parquet")
     ap.add_argument("--out", type=Path,
                     default=ROOT / "xbd/data/contact_sheet.png")
     a = ap.parse_args()
 
     import cv2
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from dataset import attach_radiometry
 
     m = pd.read_parquet(a.crops / "crop_meta.parquet")
     m = m[m.px_side >= a.min_side]
+    if a.align:
+        m = attach_radiometry(m, a.radiometry)
+        if "pre_gain0" not in m.columns:
+            print("  no radiometry file; showing raw captures")
+            a.align = False
+        else:
+            m = m[m.pre_gain0.notna()]
     print(f"{len(m):,} crops >= {a.min_side:.0f} px")
 
     blocks = []
@@ -61,11 +76,21 @@ def main():
         print(f"  {cls:14s} {len(s)} shown of {(m.damage == cls).sum():,}")
         for _, r in s.iterrows():
             pre, post = load(a.crops / r.pre), load(a.crops / r.post)
+            if a.align:
+                g = np.array([r[f"pre_gain{c}"] for c in range(3)], np.float32)
+                o = np.array([r[f"pre_off{c}"] for c in range(3)], np.float32)
+                pre = np.clip(pre.astype(np.float32) * g + o, 0, 255) \
+                        .astype(np.uint8)
             diff = cv2.absdiff(pre, post)
-            # stretch the difference so it is visible at all; the model sees the
-            # raw channels, this is presentation only
-            diff = cv2.normalize(diff, None, 0, 255, cv2.NORM_MINMAX)
+            mad = float(diff.mean())
+            # fixed gain, not per-crop min-max: normalising each panel to its
+            # own range makes a trivial difference look identical to a roof
+            # torn off, which is exactly the judgement this sheet exists to
+            # support. The model sees the raw channels; this is presentation.
+            diff = np.clip(diff.astype(np.float32) * 4, 0, 255).astype(np.uint8)
             row = np.hstack([pre, post, diff])
+            cv2.putText(row, f"d={mad:.0f}", (2 * CELL + 3, CELL - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.32, (255, 255, 255), 1)
             cv2.putText(row, cls.split("-")[0], (3, 12),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
             cv2.putText(row, f"{r.px_side:.0f}px", (3, CELL - 4),

@@ -2,3 +2,10 @@
 1,283 scenes, 117,549 buildings >= 24 px
 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
   (25/1283) hurricane-florence_00000276: 2 crops
+  (50/1283) hurricane-florence_00000535: 9 crops
+  (75/1283) hurricane-harvey_00000202: 113 crops
+  (100/1283) hurricane-harvey_00000460: 103 crops
+  (125/1283) hurricane-matthew_00000118: 1 crops
+  (150/1283) hurricane-michael_00000069: 54 crops
+  (175/1283) hurricane-michael_00000193: 24 crops
+  (200/1283) hurricane-michael_00000397: 16 crops

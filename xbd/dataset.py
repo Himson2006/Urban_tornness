@@ -46,9 +46,25 @@ TASKS = {
 }
 
 
+def attach_radiometry(m: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """Join the per-scene pre->post gain and offset, if it has been measured."""
+    if not Path(path).exists():
+        return m
+    from radiometry import alignment
+
+    r = pd.read_parquet(path)
+    g, o = zip(*(alignment(row) for _, row in r.iterrows()))
+    for c in range(3):
+        r[f"pre_gain{c}"] = [x[c] for x in g]
+        r[f"pre_off{c}"] = [x[c] for x in o]
+    cols = ["scene"] + [f"pre_{k}{c}" for k in ("gain", "off") for c in range(3)]
+    return m.merge(r[cols], on="scene", how="left")
+
+
 def load_meta(crops: Path, task: str = "middle", min_side: float = 24.0,
-              buildings: Path | None = None) -> pd.DataFrame:
-    """Crop metadata filtered to a task, with disaster attached."""
+              buildings: Path | None = None,
+              radiometry: Path | None = None) -> pd.DataFrame:
+    """Crop metadata filtered to a task, with disaster and alignment attached."""
     m = pd.read_parquet(Path(crops) / "crop_meta.parquet")
     classes = TASKS[task]
     m = m[m.damage.isin(classes) & (m.px_side >= min_side)].copy()
@@ -59,6 +75,8 @@ def load_meta(crops: Path, task: str = "middle", min_side: float = 24.0,
         m = m.merge(b, on="uid", how="left")
     else:
         m["disaster"] = m.scene.str.rsplit("_", n=1).str[0]
+    if radiometry is not None:
+        m = attach_radiometry(m, radiometry)
     return m.reset_index(drop=True)
 
 
@@ -90,13 +108,17 @@ class PairedCropDataset(Dataset):
 
     def __init__(self, meta: pd.DataFrame, crops: Path, size: int = 96,
                  paired: bool = True, augment: bool = False,
-                 normalize: bool = True):
+                 normalize: bool = True, align: bool = True):
         self.m = meta.reset_index(drop=True)
         self.root = Path(crops)
         self.size = size
         self.paired = paired
         self.augment = augment
         self.normalize = normalize
+        # scene-level gain/offset mapping the pre capture onto the post one;
+        # without it the model can read the difference in satellite passes
+        # instead of the difference in the building
+        self.align = align and paired and "pre_gain0" in self.m.columns
         n = 2 if paired else 1
         self._mean = torch.tensor(MEAN * n).view(-1, 1, 1)
         self._std = torch.tensor(STD * n).view(-1, 1, 1)
@@ -116,7 +138,15 @@ class PairedCropDataset(Dataset):
     def __getitem__(self, i: int):
         r = self.m.iloc[i]
         post = self._read(r.post)
-        ims = [self._read(r.pre), post] if self.paired else [post]
+        if self.paired:
+            pre = self._read(r.pre).astype(np.float32)
+            if self.align:
+                g = np.array([r[f"pre_gain{c}"] for c in range(3)], np.float32)
+                o = np.array([r[f"pre_off{c}"] for c in range(3)], np.float32)
+                pre = np.clip(pre * g + o, 0, 255)
+            ims = [pre.astype(np.uint8), post]
+        else:
+            ims = [post]
 
         if self.augment:
             # geometry must be applied identically to both members of the pair,
