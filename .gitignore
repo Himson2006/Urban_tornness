@@ -36,3 +36,6 @@ xbd/fetch.log
 xbd/data/crops/
 xbd/data/crops_test/
 xbd/data/labels/
+xbd_data.tar
+xbd/data/*.png
+xbd/*.log
