@@ -378,7 +378,11 @@ python xbd/train.py --fold 0 --no-paired          # ablation: is the pair load-b
 python xbd/train.py --fold 0 --task extremes      # control: easy boundary
 python xbd/train.py --fold 0 --group disaster     # held-out event
 
-# 6. tornness, with the confound checks in front
+# 6. localisation FIRST -- it gates everything downstream
+python xbd/prototype_localization.py --run xbd/runs/middle_pair_scene_f0_resnet34
+open xbd/runs/middle_pair_scene_f0_resnet34/localization.png
+
+# 7. tornness, with the confound checks in front
 python xbd/tornness.py --run xbd/runs/middle_pair_scene_f0_resnet34
 ```
 
@@ -389,6 +393,14 @@ throttling and the download takes several times longer.
 
 In the order the analysis checks them:
 
+0. **Mislocalisation.** If the prototypes an explanation would show sit at or
+   below chance on the building, they are describing the driveway and every
+   number downstream inherits that. Chance is measured over the positions a peak
+   can actually occupy -- a coarse activation grid quantises them, so the
+   building's share of the crop area is the wrong baseline and would have
+   understated chance by five points. Drawn as boxes, not heatmaps: green for
+   the building, amber for the prototype, and whether they overlap is a yes/no
+   question.
 1. **Saturation.** If `max_sim` takes a handful of distinct values, co-activation
    has no variance and every statistic built on it is noise. This is precisely
    how the pedestrian experiment failed, undetected, for weeks. `xbd/tornness.py`

@@ -121,5 +121,10 @@ for p in rows:
 PY
 
 echo
-echo "next: tornness, on every finished run"
+echo "next, in this order -- localisation gates everything else:"
+echo "  for r in xbd/runs/*/; do python xbd/prototype_localization.py --run \"\$r\"; done"
 echo "  for r in xbd/runs/*/; do python xbd/tornness.py --run \"\$r\"; done"
+echo
+echo "If the shown prototypes sit at or below chance on the building, the"
+echo "explanations point somewhere other than the building and the tornness"
+echo "numbers describe that somewhere. That is how the pedestrian work failed."
