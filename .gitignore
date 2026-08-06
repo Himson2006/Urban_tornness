@@ -33,3 +33,6 @@ runs/
 sidewalk/data/
 xbd/data/
 xbd/fetch.log
+xbd/data/crops/
+xbd/data/crops_test/
+xbd/data/labels/
