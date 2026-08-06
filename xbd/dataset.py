@@ -58,7 +58,17 @@ def attach_radiometry(m: pd.DataFrame, path: Path) -> pd.DataFrame:
         r[f"pre_gain{c}"] = [x[c] for x in g]
         r[f"pre_off{c}"] = [x[c] for x in o]
     cols = ["scene"] + [f"pre_{k}{c}" for k in ("gain", "off") for c in range(3)]
-    return m.merge(r[cols], on="scene", how="left")
+    m = m.merge(r[cols], on="scene", how="left")
+    # A scene whose imagery was not measured gets no gain. Left as NaN it would
+    # propagate through the cast to uint8 and turn the pre crop into noise --
+    # silently, for however many rows are missing. Fall back to the identity
+    # and record which rows it applies to, so callers can refuse to train on a
+    # half-aligned dataset rather than discover it later.
+    m["aligned"] = m.pre_gain0.notna()
+    for c in range(3):
+        m[f"pre_gain{c}"] = m[f"pre_gain{c}"].fillna(1.0)
+        m[f"pre_off{c}"] = m[f"pre_off{c}"].fillna(0.0)
+    return m
 
 
 def load_meta(crops: Path, task: str = "middle", min_side: float = 24.0,

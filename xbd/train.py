@@ -118,6 +118,26 @@ def inflate_conv1(features, n_blocks: int):
     return features
 
 
+def set_mode(ppnet, mode: str, stem, rest_feat, train_rest: bool):
+    """Which parameters may move, in each phase.
+
+    ProtoPNet's own `warm_only`/`joint` cannot be used here. `warm_only` freezes
+    every feature parameter, which would include the inflated stem -- the one
+    weight that *has* to move, since it is the only part of the network that has
+    never seen a 6-channel input. `joint` unfreezes the whole backbone, undoing
+    the freeze that keeps the feature space from collapsing.
+    """
+    for p in ppnet.add_on_layers.parameters():
+        p.requires_grad = mode != "last"
+    ppnet.prototype_vectors.requires_grad = mode != "last"
+    for p in ppnet.last_layer.parameters():
+        p.requires_grad = True
+    for p in stem:
+        p.requires_grad = mode != "last"
+    for p in rest_feat:
+        p.requires_grad = train_rest and mode == "joint"
+
+
 def seed_all(s: int):
     random.seed(s)
     np.random.seed(s)
@@ -176,6 +196,16 @@ def main():
     ap.add_argument("--l1", type=float, default=1e-4)
     ap.add_argument("--lr-step", type=int, default=10)
     ap.add_argument("--lr-gamma", type=float, default=0.5)
+    ap.add_argument("--dry-run", action="store_true",
+                    help="validate data, model and phase masks on CPU")
+    ap.add_argument("--balance", action="store_true", default=True)
+    ap.add_argument("--no-balance", dest="balance", action="store_false")
+    ap.add_argument("--align", action="store_true", default=True)
+    ap.add_argument("--no-align", dest="align", action="store_false",
+                    help="skip radiometric alignment -- measures how much of "
+                         "the result was the difference in satellite passes")
+    ap.add_argument("--radiometry", type=Path,
+                    default=ROOT / "xbd/data/scene_radiometry.parquet")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
 
@@ -183,8 +213,8 @@ def main():
     classes = TASKS[a.task]
     n_cls = len(classes)
     n_blocks = 2 if a.paired else 1
-    tag = (f"{a.task}_{'pair' if a.paired else 'post'}_{a.group}"
-           f"_f{a.fold}_{a.arch}")
+    tag = (f"{a.task}_{'pair' if a.paired else 'post'}"
+           f"{'' if a.align else '_raw'}_{a.group}_f{a.fold}_{a.arch}")
     run = a.out / tag
     run.mkdir(parents=True, exist_ok=True)
     if (run / "DONE").exists():
@@ -192,13 +222,25 @@ def main():
         return
     log, logclose = create_logger(log_filename=str(run / "train.log"))
 
-    m = load_meta(a.crops, a.task, a.min_side, a.buildings)
+    m = load_meta(a.crops, a.task, a.min_side, a.buildings, a.radiometry)
     m["fold"] = assign_folds(m, a.folds, a.group, a.seed)
     te = m[m.fold == a.fold]
     rest = m[m.fold != a.fold]
     # validation is a held-out fold too, so no group ever spans train and val
     va_fold = (a.fold + 1) % a.folds
     va, tr = rest[rest.fold == va_fold], rest[rest.fold != va_fold]
+
+    if a.align and a.paired:
+        cov = float(m.aligned.mean()) if "aligned" in m else 0.0
+        if cov < 0.99:
+            raise SystemExit(
+                f"radiometric alignment covers only {cov:.1%} of crops. "
+                f"Unmeasured scenes fall back to the identity, so training now "
+                f"would mix aligned and unaligned pairs and the pre/post "
+                f"difference would partly encode which scenes got measured.\n"
+                f"  fix: python xbd/radiometry.py\n"
+                f"  or:  --no-align, to train on raw captures deliberately")
+        log(f"radiometric alignment: {cov:.1%} of crops")
 
     log(f"task={a.task} {classes} | paired={a.paired} | group={a.group} "
         f"| fold {a.fold}/{a.folds}")
@@ -210,13 +252,32 @@ def main():
     log("checkpoint selected on VAL; test scored once at the end")
 
     def mk(sub, augment):
-        return PairedCropDataset(sub, a.crops, a.crop_px, a.paired, augment)
+        return PairedCropDataset(sub, a.crops, a.crop_px, a.paired, augment,
+                                 align=a.align)
 
     ds_tr, ds_va, ds_te = mk(tr, True), mk(va, False), mk(te, False)
     dl = lambda d, sh: torch.utils.data.DataLoader(   # noqa: E731
         TwoTuple(d), batch_size=a.batch, shuffle=sh, num_workers=a.workers,
         pin_memory=True, drop_last=False)
-    tr_l, va_l, te_l = dl(ds_tr, True), dl(ds_va, False), dl(ds_te, False)
+    va_l, te_l = dl(ds_va, False), dl(ds_te, False)
+
+    # minor vs major is near-balanced, but no-damage vs destroyed is roughly
+    # 16:1 in these scenes -- a model can hit 94% there by never predicting
+    # destroyed, and its prototypes would mean nothing. Sample instead of
+    # reweighting the loss, so ProtoPNet's clustering terms stay untouched.
+    cw = class_weights(tr, n_cls)
+    imbalance = float(cw.max() / cw.min())
+    if a.balance and imbalance > 1.5:
+        w = cw.numpy()[tr.label.values]
+        sampler = torch.utils.data.WeightedRandomSampler(
+            torch.as_tensor(w, dtype=torch.double), len(w), replacement=True)
+        tr_l = torch.utils.data.DataLoader(
+            TwoTuple(ds_tr), batch_size=a.batch, sampler=sampler,
+            num_workers=a.workers, pin_memory=True)
+        log(f"class imbalance {imbalance:.1f}:1 -> balanced sampler on train")
+    else:
+        tr_l = dl(ds_tr, True)
+        log(f"class imbalance {imbalance:.1f}:1 -> plain shuffling")
     push_l = torch.utils.data.DataLoader(
         UnNormalized(mk(tr, False)), batch_size=a.batch, shuffle=False,
         num_workers=a.workers, pin_memory=True)
@@ -230,7 +291,12 @@ def main():
         add_on_layers_type="regular")
     ppnet.features = inflate_conv1(ppnet.features, n_blocks)
     ppnet = ppnet.to(dev)
-    ppnet_par = torch.nn.DataParallel(ppnet) if dev == "cuda" else ppnet
+    if dev != "cuda" and not a.dry_run:
+        raise SystemExit(
+            "ProtoPNet's training loop calls .cuda() internally, so training "
+            "needs a GPU. Use --dry-run to validate data, model and a forward "
+            "pass on CPU before shipping to the server.")
+    ppnet_par = torch.nn.DataParallel(ppnet)
     log(f"{n_proto} prototypes ({a.protos_per_class}/class), dim {a.proto_dim}"
         f" | input {3 * n_blocks} channels")
 
@@ -266,19 +332,40 @@ def main():
         [{"params": ppnet.last_layer.parameters(), "lr": 1e-4}])
 
     coefs = {"crs_ent": 1, "clst": a.clst, "sep": a.sep, "l1": a.l1}
-    log(f"coefs={coefs} | class weights "
-        f"{class_weights(tr, n_cls).numpy().round(3).tolist()}")
+    log(f"coefs={coefs} | align={a.align}")
     push_epochs = [e for e in range(a.epochs)
                    if e >= a.push_start and e % a.push_every == 0]
 
+    if a.dry_run:
+        set_mode(ppnet, "warm", stem, rest_feat, a.features_lr > 0)
+        x, y = next(iter(tr_l))
+        logits, msim = ppnet(x)
+        trainable = [n for n, p in ppnet.named_parameters() if p.requires_grad]
+        log(f"DRY RUN: batch {tuple(x.shape)} -> logits {tuple(logits.shape)}, "
+            f"similarities {tuple(msim.shape)}")
+        log(f"  warm-phase trainable groups: "
+            f"{sorted({n.split('.')[0] for n in trainable})}")
+        log(f"  stem trainable in warm phase: "
+            f"{all(p.requires_grad for p in stem)}  (must be True when paired)")
+        set_mode(ppnet, "joint", stem, rest_feat, a.features_lr > 0)
+        log(f"  backbone still frozen in joint phase: "
+            f"{not any(p.requires_grad for p in rest_feat)}")
+        px, py = next(iter(push_l))
+        log(f"  push loader range [{px.min():.3f}, {px.max():.3f}] "
+            f"(must be within [0,1])")
+        log("  data, model and modes all check out; train on a GPU")
+        logclose()
+        return
+
     best, rows = 0.0, []
+    train_rest = a.features_lr > 0
     for ep in range(a.epochs):
         if ep < a.warm_epochs:
-            tnt.warm_only(model=ppnet_par, log=log)
+            set_mode(ppnet, "warm", stem, rest_feat, train_rest)
             tnt.train(model=ppnet_par, dataloader=tr_l, optimizer=warm_opt,
                       class_specific=True, coefs=coefs, log=log)
         else:
-            tnt.joint(model=ppnet_par, log=log)
+            set_mode(ppnet, "joint", stem, rest_feat, train_rest)
             tnt.train(model=ppnet_par, dataloader=tr_l, optimizer=joint_opt,
                       class_specific=True, coefs=coefs, log=log)
             joint_sched.step()
@@ -289,7 +376,7 @@ def main():
                 class_specific=True, preprocess_input_function=preprocess_stack(n_blocks),
                 prototype_layer_stride=1, root_dir_for_saving_prototypes=None,
                 epoch_number=ep, log=log)
-            tnt.last_only(model=ppnet_par, log=log)
+            set_mode(ppnet, "last", stem, rest_feat, train_rest)
             for _ in range(5):
                 tnt.train(model=ppnet_par, dataloader=tr_l,
                           optimizer=last_opt, class_specific=True,

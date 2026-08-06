@@ -130,6 +130,8 @@ def main():
     ap.add_argument("--crops", type=Path, default=ROOT / "xbd/data/crops")
     ap.add_argument("--buildings", type=Path,
                     default=ROOT / "xbd/data/buildings.parquet")
+    ap.add_argument("--radiometry", type=Path,
+                    default=ROOT / "xbd/data/scene_radiometry.parquet")
     ap.add_argument("--batch", type=int, default=128)
     ap.add_argument("--workers", type=int, default=8)
     a = ap.parse_args()
@@ -142,10 +144,14 @@ def main():
     print(f"{a.run.name}: {cfg['task']} {classes} | paired={cfg['paired']} "
           f"| test acc {cfg['test_acc']:.4f} (majority {cfg['majority']:.4f})")
 
-    m = load_meta(a.crops, cfg["task"], A["min_side"], a.buildings)
+    # the dataset must be built exactly as it was for training, alignment
+    # included, or the model is scored on inputs it never saw
+    m = load_meta(a.crops, cfg["task"], A["min_side"], a.buildings,
+                  Path(A.get("radiometry", a.radiometry)))
     m["fold"] = assign_folds(m, A["folds"], cfg["group"], A["seed"])
     te = m[m.fold == cfg["fold"]].reset_index(drop=True)
-    ds = PairedCropDataset(te, a.crops, A["crop_px"], cfg["paired"], False)
+    ds = PairedCropDataset(te, a.crops, A["crop_px"], cfg["paired"], False,
+                           align=A.get("align", True))
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     ppnet = ppnet_model.construct_PPNet(
