@@ -25,10 +25,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 FOLDS_TOO=0
+ANALYSE=0
 GPUS=()
 for arg in "$@"; do
   case "$arg" in
     --folds-too) FOLDS_TOO=1 ;;
+    --analyse|--analyze) ANALYSE=1 ;;
     *) GPUS+=("$arg") ;;
   esac
 done
@@ -120,11 +122,29 @@ for p in rows:
           f"{d['val_acc']:7.4f} {d['n_test']:8,}")
 PY
 
-echo
-echo "next, in this order -- localisation gates everything else:"
-echo "  for r in xbd/runs/*/; do python xbd/prototype_localization.py --run \"\$r\"; done"
-echo "  for r in xbd/runs/*/; do python xbd/tornness.py --run \"\$r\"; done"
-echo
-echo "If the shown prototypes sit at or below chance on the building, the"
-echo "explanations point somewhere other than the building and the tornness"
-echo "numbers describe that somewhere. That is how the pedestrian work failed."
+if [ "$ANALYSE" -eq 1 ]; then
+  # A failure in one run's analysis must not abort the others, so each is
+  # guarded; the log says which, and the run stays on disk to retry.
+  for stage in prototype_localization tornness; do
+    echo
+    echo "=== ${stage} ==="
+    for r in xbd/runs/*/; do
+      [ -f "${r}DONE" ] || { echo "  skip $(basename "$r") -- not finished"; continue; }
+      echo "--- $(basename "$r") ---"
+      python "xbd/${stage}.py" --run "$r" 2>&1 | tee "logs/${stage}_$(basename "$r").out" \
+        || echo "  ${stage} FAILED on $(basename "$r"); see the log"
+    done
+  done
+  echo
+  echo "ALL DONE. Read localisation before tornness: if the shown prototypes"
+  echo "sit at or below chance on the building, the explanations point"
+  echo "somewhere other than the building and the tornness numbers describe"
+  echo "that somewhere. That is how the pedestrian work failed."
+else
+  echo
+  echo "next, in this order -- localisation gates everything else:"
+  echo "  for r in xbd/runs/*/; do python xbd/prototype_localization.py --run \"\$r\"; done"
+  echo "  for r in xbd/runs/*/; do python xbd/tornness.py --run \"\$r\"; done"
+  echo
+  echo "or re-run this script with --analyse to chain them automatically."
+fi
