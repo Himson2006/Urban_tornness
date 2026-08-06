@@ -31,3 +31,5 @@ data/
 ProtoPNet/pretrained_models/
 runs/
 sidewalk/data/
+xbd/data/
+xbd/fetch.log
