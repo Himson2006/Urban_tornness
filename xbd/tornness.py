@@ -148,6 +148,10 @@ def main():
     # included, or the model is scored on inputs it never saw
     m = load_meta(a.crops, cfg["task"], A["min_side"], a.buildings,
                   Path(A.get("radiometry", a.radiometry)))
+    if A.get("disaster"):
+        m = m[m.disaster == A["disaster"]].reset_index(drop=True)
+        print(f"  restricted to {A['disaster']} ({len(m):,} crops) -- the model "
+              f"was trained only on this event")
     m["fold"] = assign_folds(m, A["folds"], cfg["group"], A["seed"])
     te = m[m.fold == cfg["fold"]].reset_index(drop=True)
     ds = PairedCropDataset(te, a.crops, A["crop_px"], cfg["paired"], False,
