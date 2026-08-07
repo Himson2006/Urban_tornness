@@ -200,8 +200,21 @@ def main():
         print("     pedestrian experiment failed; stop and fix the model.")
 
     print("\n=== 2. is it just image degradation? ===")
-    have = [c for c in DEGRADE if c in d and d[c].notna().any()]
+    # Within one event the capture parameters barely move -- off-nadir, GSD and
+    # sun elevation are properties of the satellite pass, and an event is a
+    # handful of passes. A constant covariate contributes nothing to a partial
+    # correlation and makes spearmanr return nan, so drop them and say so.
+    have, const = [], []
+    for c in DEGRADE:
+        if c not in d or not d[c].notna().any():
+            continue
+        (const if d[c].nunique(dropna=True) < 3 else have).append(c)
     print(f"  covariates available: {have}")
+    if const:
+        print(f"  constant within this subset, dropped: {const}")
+        print(f"  (within one event the capture geometry is fixed, so these")
+        print(f"   cannot confound anything here -- which is itself a reason")
+        print(f"   to prefer within-event analysis)")
     from scipy import stats
     for target, name in [(d.margin.values, "margin (low = torn)")]:
         r, p = stats.spearmanr(d.coact.values, target, nan_policy="omit")
