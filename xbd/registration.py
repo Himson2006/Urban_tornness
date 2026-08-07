@@ -69,13 +69,17 @@ def main():
 
     m = load_meta(a.crops, "all4", 24.0, a.buildings, a.radiometry)
     if a.sample and len(m) > a.sample:
-        m = m.groupby("disaster", group_keys=False).apply(
-            lambda g: g.sample(min(len(g), max(200, a.sample // 10)),
-                               random_state=0))
+        # not groupby().apply(): from pandas 2.2 the grouping column is dropped
+        # from the result, so `m.disaster` disappeared on the next line
+        per = max(200, a.sample // max(m.disaster.nunique(), 1))
+        m = pd.concat([g.sample(min(len(g), per), random_state=0)
+                       for _, g in m.groupby("disaster")], ignore_index=True)
     print(f"measuring {len(m):,} crops across {m.disaster.nunique()} events")
 
     rows = []
-    for _, r in m.iterrows():
+    for n, (_, r) in enumerate(m.iterrows(), 1):
+        if n % 500 == 0:
+            print(f"  {n:,}/{len(m):,}", flush=True)
         pre = cv2.imread(str(a.crops / r.pre))
         post = cv2.imread(str(a.crops / r.post))
         if pre is None or post is None:

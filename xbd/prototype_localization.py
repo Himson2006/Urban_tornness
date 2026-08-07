@@ -176,6 +176,9 @@ def main():
                     default=ROOT / "xbd/data/buildings.parquet")
     ap.add_argument("--radiometry", type=Path,
                     default=ROOT / "xbd/data/scene_radiometry.parquet")
+    ap.add_argument("--all-proto", type=int, default=400,
+                    help="buildings scored against every prototype; the shown "
+                         "prototype is always scored on all of them")
     ap.add_argument("--limit", type=int, default=3000,
                     help="test buildings to score; 0 = all")
     ap.add_argument("--panel", type=int, default=12,
@@ -232,10 +235,19 @@ def main():
           f"positions; chance measured over those, not crop area")
 
     from scipy import stats
+    # The shown prototype is the headline, so score it on every building. The
+    # all-prototypes figure is a diffuse background statistic and does not need
+    # the full cross product -- 3,000 x 20 upsamples is a few minutes of pure
+    # Python for a number that moves in the third decimal.
+    rng = np.random.default_rng(0)
+    allp = set(rng.choice(len(te), min(a.all_proto, len(te)), replace=False))
     rows = []
     for i in range(len(te)):
+        if i % 500 == 0:
+            print(f"  scoring {i:,}/{len(te):,}", flush=True)
         bl = blds[i]
-        for j in range(sim.shape[1]):
+        js = range(sim.shape[1]) if i in allp else [shown[i]]
+        for j in js:
             bx = act_bbox(sim[i, j], S)
             if bx is None:
                 continue
