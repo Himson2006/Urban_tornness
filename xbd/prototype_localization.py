@@ -231,6 +231,7 @@ def main():
     print(f"  activation grid {grid}x{grid} -> {grid * grid} reachable "
           f"positions; chance measured over those, not crop area")
 
+    from scipy import stats
     rows = []
     for i in range(len(te)):
         bl = blds[i]
@@ -240,7 +241,12 @@ def main():
                 continue
             rows.append({"i": i, "proto": j, "shown": j == shown[i],
                          "inside": centre_inside(bx, bl), "iou": iou(bx, bl),
-                         "chance": chance[i]})
+                         "chance": chance[i],
+                         # a box spanning the whole crop has its centre at the
+                         # crop centre, and the building is centred by
+                         # construction -- so centre-inside can be bought with
+                         # box size alone
+                         "area": (bx[2] - bx[0]) * (bx[3] - bx[1]) / (S * S)})
     d = pd.DataFrame(rows)
 
     print(f"\n=== do prototypes land on the building? ===")
@@ -253,11 +259,42 @@ def main():
         obs = sub.inside.mean()
         lift = obs - sub.chance.mean()
         # binomial test against the mean per-building chance
-        from scipy import stats
         p = stats.binomtest(int(sub.inside.sum()), len(sub),
                             sub.chance.mean()).pvalue
         print(f"  {nm:22s} inside {obs:6.1%}  chance {sub.chance.mean():5.1%}  "
               f"lift {lift:+.1%}  IoU {sub.iou.mean():.3f}  (p={p:.2g}, n={len(sub):,})")
+    sh = d[d.shown]
+    print("\n=== is the metric bought with box size? ===")
+    print(f"  prototype box covers {sh.area.median():.1%} of the crop "
+          f"(median), {sh.area.quantile(.9):.1%} at p90")
+    print(f"  building covers {chance.mean():.1%} of reachable positions")
+    small = sh[sh.area <= 0.35]
+    if len(small) > 50:
+        p_s = stats.binomtest(int(small.inside.sum()), len(small),
+                              small.chance.mean()).pvalue
+        print(f"  restricted to boxes <=35% of the crop: inside "
+              f"{small.inside.mean():6.1%} vs chance {small.chance.mean():5.1%} "
+              f"(lift {small.inside.mean()-small.chance.mean():+.1%}, "
+              f"n={len(small):,}, p={p_s:.2g})")
+    else:
+        print(f"  only {len(small)} shown boxes are <=35% of the crop -- the")
+        print(f"  prototypes are not localised enough for the metric to mean much")
+    print(f"  IoU with the building: {sh.iou.mean():.3f} "
+          f"(centre-inside without IoU means a box that merely contains it)")
+
+    print("\n=== is one prototype doing all the explaining? ===")
+    vc = sh.proto.value_counts(normalize=True)
+    print(f"  {len(vc)} of {d.proto.nunique()} prototypes are ever shown")
+    print(f"  most-used prototype accounts for {vc.iloc[0]:.1%} of explanations "
+          f"(p{vc.index[0]})")
+    print(f"  top 3 account for {vc.head(3).sum():.1%}")
+    ent = float(-(vc * np.log(vc)).sum() / np.log(max(d.proto.nunique(), 2)))
+    print(f"  normalised entropy {ent:.3f} (1.0 = every prototype used equally)")
+    if vc.iloc[0] > 0.4:
+        print("  -> a magnet prototype. The explanation is nearly constant")
+        print("     across buildings, so it carries little information about")
+        print("     any particular one, whatever its localisation score.")
+
     verdict = d[d.shown].inside.mean() - d[d.shown].chance.mean()
     print(f"\n  -> shown prototypes are {'ABOVE' if verdict > 0.05 else 'AT OR BELOW'}"
           f" chance on the building")
