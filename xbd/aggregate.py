@@ -68,7 +68,12 @@ def load(runs: Path) -> pd.DataFrame:
                     T.coact, T.margin, nan_policy="omit").statistic)
         rows.append({
             "tag": d["tag"], "task": d["task"],
-            "event": d.get("disaster") or "POOLED",
+            # a held-out-event run is not "pooled" -- it is a different
+            # experiment, and averaging it into the pooled rows produced a
+            # 0.649 +- 0.348 that described nothing
+            "event": (d.get("disaster")
+                      or ("HELD-OUT-EVENT" if d["group"] == "disaster"
+                          else "POOLED")),
             "input": "pair" if d["paired"] else "post",
             "aligned": d.get("align", True), "group": d["group"],
             "fold": d["fold"], "n_test": d["n_test"],
@@ -96,7 +101,8 @@ def main():
     print("=== 1. is reducibility graded by failure mode? ===")
     print(f"  {'task':9s} {'event':22s} {'input':6s} {'k':>2} "
           f"{'AUC':>16} {'bal acc':>16}")
-    for (task, ev, inp), g in d.groupby(["task", "event", "input"]):
+    d["cond"] = d.event + np.where(d["aligned"], "", " (raw)")
+    for (task, ev, inp), g in d.groupby(["task", "cond", "input"]):
         am, ac = ci95(g.auc.values)
         bm, bc = ci95(g.bal.values)
         ai = f"{am:.3f} +- {ac:.3f}" if np.isfinite(ac) else f"{am:.3f}   (n=1)"
